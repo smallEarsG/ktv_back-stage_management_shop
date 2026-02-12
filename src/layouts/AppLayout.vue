@@ -1,6 +1,7 @@
-<script setup lang="ts">
+<script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { computed } from 'vue'
 import {
   Odometer,
   List,
@@ -15,6 +16,20 @@ import {
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+const menuItems = [
+  { path: '/dashboard', icon: Odometer, label: '首页看板', permission: 'dashboard:view' },
+  { path: '/orders', icon: List, label: '订单管理', permission: 'order:view' },
+  { path: '/products', icon: Goods, label: '商品管理', permission: 'product:view' },
+  { path: '/refunds', icon: RefreshLeft, label: '退款售后', permission: 'refund:view' },
+  { path: '/finance', icon: Money, label: '财务管理', permission: 'finance:view' },
+  { path: '/warehouse', icon: Box, label: '仓库管理', permission: 'warehouse:view' },
+  { path: '/settings', icon: Setting, label: '门店设置', permission: 'settings:view' }
+]
+
+const filteredMenuItems = computed(() => {
+  return menuItems.filter(item => userStore.hasPermission(item.permission))
+})
 
 const handleLogout = () => {
   userStore.logout()
@@ -39,40 +54,12 @@ const handleLogout = () => {
         active-text-color="#fff"
         background-color="#0f172a"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><Odometer /></el-icon>
-          <span>首页看板</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/orders">
-          <el-icon><List /></el-icon>
-          <span>订单管理</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/products">
-          <el-icon><Goods /></el-icon>
-          <span>商品管理</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/refunds">
-          <el-icon><RefreshLeft /></el-icon>
-          <span>退款售后</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/finance">
-          <el-icon><Money /></el-icon>
-          <span>财务管理</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/warehouse">
-          <el-icon><Box /></el-icon>
-          <span>仓库管理</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>门店设置</span>
-        </el-menu-item>
+        <template v-for="item in filteredMenuItems" :key="item.path">
+          <el-menu-item :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
     
@@ -113,9 +100,11 @@ const handleLogout = () => {
 :deep(.el-menu-item.is-active) {
   background-color: #1e293b !important;
   border-right: 3px solid #3b82f6;
+  color: #fff !important;
 }
 :deep(.el-menu-item:hover) {
   background-color: #1e293b !important;
+  color: #fff !important;
 }
 .fade-enter-active,
 .fade-leave-active {

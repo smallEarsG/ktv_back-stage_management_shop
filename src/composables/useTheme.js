@@ -1,19 +1,17 @@
 import { ref, watchEffect, onMounted, computed } from 'vue'
 
-type Theme = 'light' | 'dark'
-
 export function useTheme() {
-  const theme = ref<Theme>('light')
+  const theme = ref('light')
 
-  const getPreferredTheme = (): Theme => {
-    const saved = localStorage.getItem('theme') as Theme | null
+  const getPreferredTheme = () => {
+    const saved = localStorage.getItem('theme')
     if (saved === 'light' || saved === 'dark') return saved
     return window.matchMedia('(prefers-color-scheme: dark)').matches
       ? 'dark'
       : 'light'
   }
 
-  const applyTheme = (t: Theme) => {
+  const applyTheme = (t) => {
     document.documentElement.classList.remove('light', 'dark')
     document.documentElement.classList.add(t)
     localStorage.setItem('theme', t)

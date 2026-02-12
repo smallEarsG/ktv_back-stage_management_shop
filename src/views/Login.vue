@@ -1,32 +1,39 @@
-<script setup lang="ts">
+<script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
+import { Iphone, Lock } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const loading = ref(false)
 const form = reactive({
-  username: '',
+  phone: '',
   password: ''
 })
 
-const handleLogin = () => {
+const handleLogin = async () => {
+  if (!form.phone || !form.password) {
+    ElMessage.warning('请输入手机号和密码')
+    return
+  }
+  
   loading.value = true
-  // Mock login delay
-  setTimeout(() => {
-    if (form.username === 'admin' && form.password === '123456') {
-      userStore.login('mock-token-123', { name: 'Admin', role: 'admin' })
+  try {
+    const success = await userStore.login({
+      phone: form.phone,
+      password: form.password
+    })
+    
+    if (success) {
       ElMessage.success('登录成功')
       router.push('/dashboard')
-    } else {
-      ElMessage.error('用户名或密码错误 (admin/123456)')
-      loading.value = false
     }
-  }, 1000)
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -41,9 +48,9 @@ const handleLogin = () => {
       <el-form :model="form" @submit.prevent="handleLogin">
         <el-form-item>
           <el-input 
-            v-model="form.username" 
-            placeholder="用户名" 
-            :prefix-icon="User"
+            v-model="form.phone" 
+            placeholder="手机号" 
+            :prefix-icon="Iphone"
             size="large"
           />
         </el-form-item>
@@ -71,7 +78,7 @@ const handleLogin = () => {
         </el-button>
         
         <div class="mt-4 text-center text-sm text-slate-400">
-          默认账号: admin / 123456
+          测试账号: 13800138000 / password123
         </div>
       </el-form>
     </div>
