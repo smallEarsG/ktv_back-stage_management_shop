@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Plus, Right } from '@element-plus/icons-vue'
 import request from '@/lib/request'
@@ -18,15 +18,18 @@ const historyTotal = ref(0)
 const showHistoryTitle = ref('')
 const selectedProduct = ref(null)
 const skuOptions = ref([])
+const historySkuOptions = ref([])
 const historyQuery = reactive({
   productId: '',
+  skuId: '',
   type: '',
   page: 1,
-  pageSize: 20
+  pageSize: 10
 })
 
 const form = reactive({
   productId: '',
+  skuId: '',
   quantity: 0,
   reason: ''
 })
@@ -37,20 +40,20 @@ const fetchInventory = async () => {
     const res = await request.get('/products', {
       params: {
         page: 1,
-        size: 1000,
-        name: searchQuery.value || undefined
+        pageSize: 1000,
+        keyword: searchQuery.value || undefined
       }
     })
-    console.log(res)
     stockItems.value = (res.list || []).map(p => ({
       id: p.id,
       name: p.name,
       image: p.image,
-      current: p.stock,
-      min: p.lowStockThreshold,
-      status: p.stock < p.lowStockThreshold ? 'low' : 'normal',
+      current: Number(p.stock) || 0,
+      min: Number(p.lowStockThreshold ?? 10) || 10,
+      status: (Number(p.stock) || 0) < (Number(p.lowStockThreshold ?? 10) || 10) ? 'low' : 'normal',
       hasSkus: Boolean(p.hasSkus),
-      stockType: p.stockType
+      skus: p.skus || [],
+      specList: p.specList || []
     }))
   } catch (e) {
     console.error(e)
@@ -59,20 +62,55 @@ const fetchInventory = async () => {
   }
 }
 
+const normalizeSpecs = (raw) => {
+  if (!raw) return {}
+  try {
+    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (Array.isArray(obj)) return {}
+    if (obj && typeof obj === 'object') return obj
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+const formatSpecsLabel = (specsObj) => {
+  const label = Object.values(specsObj || {}).join(' / ')
+  return label || '默认SKU'
+}
+
+const normalizeSkuMeta = (s) => {
+  const specsObj = normalizeSpecs(s?.specs ?? s?.sku_specs ?? s?.skuSpecs ?? s?.skuSpecs)
+  const stock = Number(s?.stock ?? s?.stockQuantity ?? s?.stock_quantity) || 0
+  const low = Number(s?.lowStockThreshold ?? 10) || 10
+  const skuCode = s?.skuCode ?? s?.sku_code ?? s?.code ?? ''
+  return { id: s?.id, specsObj, stock, low, skuCode }
+}
+
+const selectedSkuMeta = computed(() => {
+  const id = form.skuId
+  if (!id) return null
+  const skus = selectedProduct.value?.skus || []
+  const match = skus.find(s => String(s?.id) === String(id))
+  return match ? normalizeSkuMeta(match) : null
+})
+
 const loadProductDetail = async (row) => {
   try {
     if (row && (row.skus || row.specList)) {
       selectedProduct.value = row
       const skus = row.skus || []
-      skuOptions.value = skus.map(s => {
-        const specsObj = s.specs || s.sku_specs || {}
-        const label = Object.values(specsObj).join(' / ')
-        return {
-          value: s.skuCode || s.sku_code || s.code || s.id,
-          label,
-          deduct: s.deduct ?? s.stock_deduct_count ?? 1
-        }
-      })
+      const options = skus
+        .map(s => normalizeSkuMeta(s))
+        .filter(s => s.id !== undefined && s.id !== null)
+        .map(s => ({
+          value: s.id,
+          label: `${formatSpecsLabel(s.specsObj)}${s.skuCode ? ` (${s.skuCode})` : ''}`,
+          stock: s.stock,
+          low: s.low
+        }))
+      skuOptions.value = options
+      if (options.length === 1) form.skuId = options[0].value
       return
     }
     const res = await request.get(`/products/${row.id}`)
@@ -80,16 +118,17 @@ const loadProductDetail = async (row) => {
     selectedProduct.value = p
     
     const skus = p.skus || []
-    skuOptions.value = skus.map(s => {
-      const specsObj = JSON.parse(s.skuSpecs) || {}
-      const label = Object.values(specsObj).join(' / ')
-      return {
-        value:  s.id,
-        label: `${label} (${s.skuCode || s.id})`,
-        deduct: s.deduct ?? s.stock_deduct_count ?? 1,
-        // id,
-      }
-    })
+    const options = skus
+      .map(s => normalizeSkuMeta(s))
+      .filter(s => s.id !== undefined && s.id !== null)
+      .map(s => ({
+        value: s.id,
+        label: `${formatSpecsLabel(s.specsObj)}${s.skuCode ? ` (${s.skuCode})` : ''}`,
+        stock: s.stock,
+        low: s.low
+      }))
+    skuOptions.value = options
+    if (options.length === 1) form.skuId = options[0].value
   } catch (e) {
     console.error(e)
     selectedProduct.value = null
@@ -103,6 +142,7 @@ const fetchHistory = async () => {
     const res = await request.get('/warehouse/history', {
       params: {
         productId: historyQuery.productId || undefined,
+        skuId: historyQuery.skuId || undefined,
         type: historyQuery.type || undefined,
         page: historyQuery.page,
         pageSize: historyQuery.pageSize
@@ -152,7 +192,8 @@ const handleAction = async (type, row = null) => {
   form.productId = row ? row.id : ''
   selectedProduct.value = null
   skuOptions.value = []
-  if (row && row.hasSkus && (row.stockType === 'independent' || type !== 'inbound')) {
+  form.skuId = ''
+  if (row) {
     await loadProductDetail(row)
   }
   form.quantity = 0
@@ -162,15 +203,29 @@ const handleAction = async (type, row = null) => {
 
 const openHistory = (row) => {
   historyQuery.productId = row ? row.id : ''
+  historyQuery.skuId = ''
   historyQuery.type = ''
   historyQuery.page = 1
   showHistoryDialog.value = true
   showHistoryTitle.value = `${row.name || '所有商品'} 的出入库记录`
+  historySkuOptions.value = []
+  if (row?.skus?.length) {
+    historySkuOptions.value = row.skus
+      .map(s => normalizeSkuMeta(s))
+      .filter(s => s.id !== undefined && s.id !== null)
+      .map(s => ({ value: s.id, label: `${formatSpecsLabel(s.specsObj)}${s.skuCode ? ` (${s.skuCode})` : ''}` }))
+  }
   fetchHistory()
 }
 
 const handleHistoryTypeChange = (val) => {
   historyQuery.type = val || ''
+  historyQuery.page = 1
+  fetchHistory()
+}
+
+const handleHistorySkuChange = (val) => {
+  historyQuery.skuId = val || ''
   historyQuery.page = 1
   fetchHistory()
 }
@@ -201,23 +256,15 @@ const submitAction = async () => {
     } else {
       endpoint = '/warehouse/stocktake'
     }
-    if (selectedProduct.value && selectedProduct.value.hasSkus && selectedProduct.value.stockType === 'independent' && !form.skuId) {
-      ElMessage.error('请先选择规格')
-      return
-    }
     const payload = {
       productId: form.productId,
+      skuId: form.skuId || undefined,
       quantity: form.quantity,
       reason: form.reason
     }
-    if (selectedProduct.value && selectedProduct.value.hasSkus) {
-      if (selectedProduct.value.stockType === 'independent') {
-        // 独立库存：必须选择 SKU，组合 productId_skuId
-        payload.productId = `${form.productId}_${form.skuId}`
-      } else {
-        // 共享库存：可选 SKU，若选择则组合以便记录 skuId；未选择则用商品 ID
-        payload.productId = form.skuId ? `${form.productId}_${form.skuId}` : form.productId
-      }
+    if ((selectedProduct.value?.skus || []).length > 1 && !form.skuId) {
+      ElMessage.error('多规格商品请选择规格')
+      return
     }
     await request.post(endpoint, payload)
     ElMessage.success('操作成功')
@@ -255,6 +302,14 @@ onMounted(() => {
     
     <el-table :data="stockItems" style="width: 100%" v-loading="loading">
       <el-table-column prop="name" label="商品/物料名称" />
+      <el-table-column label="规格" width="120">
+        <template #default="{ row }">
+          <template v-if="(row.skus || []).length > 1">
+            <el-tag size="small" effect="plain">{{ (row.skus || []).length }}个SKU</el-tag>
+          </template>
+          <template v-else>默认SKU</template>
+        </template>
+      </el-table-column>
       <el-table-column prop="current" label="当前库存" width="150">
         <template #default="{ row }">
           <span :class="row.status === 'low' ? 'text-red-600 font-bold' : ''">{{ row.current }}</span>
@@ -305,23 +360,20 @@ onMounted(() => {
             </el-link>
           </div>
         </el-form-item>
-        <el-form-item label="选择规格" v-if="selectedProduct && selectedProduct.hasSkus && (dialogType !== 'inbound' || selectedProduct.stockType === 'independent')">
-          <el-select 
-            v-model="form.skuId" 
-            placeholder="请选择规格" 
-            filterable 
-            clearable
-            style="width: 100%"
-          >
-            <el-option
-              v-for="opt in skuOptions"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
+        <el-form-item label="选择规格" v-if="selectedProduct && skuOptions.length">
+          <el-select v-model="form.skuId" placeholder="请选择规格" filterable clearable style="width: 100%">
+            <el-option v-for="opt in skuOptions" :key="String(opt.value)" :label="opt.label" :value="opt.value">
+              <div class="flex justify-between items-center w-full">
+                <span>{{ opt.label }}</span>
+                <span v-if="opt.stock !== null && opt.stock !== undefined" class="text-xs text-slate-500">库存 {{ opt.stock }}</span>
+              </div>
+            </el-option>
           </el-select>
-          <div v-if="selectedProduct.stockType === 'shared'" class="mt-1 text-xs text-gray-500">
-            共享库存，扣减=数量×SKU消耗
+          <div v-if="selectedSkuMeta" class="mt-1 text-xs text-gray-500">
+            该规格库存 {{ selectedSkuMeta.stock }}，预警 {{ selectedSkuMeta.low }}{{ selectedSkuMeta.skuCode ? `，编码 ${selectedSkuMeta.skuCode}` : '' }}
+          </div>
+          <div v-else-if="(selectedProduct.skus || []).length > 1" class="mt-1 text-xs text-gray-500">
+            多规格商品必须选择规格
           </div>
         </el-form-item>
         <el-form-item label="数量">
@@ -337,7 +389,7 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showHistoryDialog" :title="showHistoryTitle" width="800px" class="rounded-lg">
+    <el-dialog v-model="showHistoryDialog" :title="showHistoryTitle" width="1200px" class="rounded-lg">
       <div class="flex justify-between items-center p-4 mb-4 bg-gray-50 rounded-lg">
         <div class="flex gap-2 items-center">
           <span class="text-sm font-medium text-gray-600">筛选类型：</span>
@@ -347,6 +399,18 @@ onMounted(() => {
             <el-radio-button label="outbound">出库</el-radio-button>
             <el-radio-button label="stocktake">盘点</el-radio-button>
           </el-radio-group>
+          <el-select
+            v-if="historyQuery.productId && historySkuOptions.length"
+            v-model="historyQuery.skuId"
+            placeholder="全部规格"
+            clearable
+            filterable
+            size="small"
+            class="w-56"
+            @change="handleHistorySkuChange"
+          >
+            <el-option v-for="opt in historySkuOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
         </div>
         <div class="text-xs text-gray-400">
           共 {{ historyTotal }} 条记录
@@ -361,9 +425,9 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="模式" width="80" align="center">
+        <el-table-column label="SKU" width="80" align="center">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.stockType === 'shared' ? '共享' : '独立' }}</el-tag>
+            <el-tag size="small" effect="plain">{{ row.skuCode }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="规格" min-width="140" align="center">

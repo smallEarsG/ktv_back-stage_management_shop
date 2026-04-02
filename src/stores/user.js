@@ -19,6 +19,8 @@ export const useUserStore = defineStore('user', () => {
   if (storedUserInfo && !storedUserInfo.permissions) {
     storedUserInfo.permissions = [
       'dashboard:view',
+        'pos:view',
+        'workbench:view',
       'order:view',
       'product:view',
       'refund:view',
@@ -48,6 +50,8 @@ export const useUserStore = defineStore('user', () => {
       if (!user.permissions) {
         user.permissions = [
           'dashboard:view',
+          'pos:view',
+          'workbench:view',
           'order:view',
           'product:view',
           'refund:view',
@@ -93,6 +97,7 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
     localStorage.removeItem('currentStoreId')
+    router.replace('/login')
   }
 
   function hasPermission(permission) {

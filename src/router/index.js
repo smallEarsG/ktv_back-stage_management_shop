@@ -36,6 +36,18 @@ const router = createRouter({
           meta: { title: '订单管理', requiresAuth: true, permission: 'order:view' }
         },
         {
+          path: 'pos/index',
+          name: 'PosIndex',
+          component: () => import('@/views/pos/PosIndex.vue'),
+          meta: { title: '收银台', requiresAuth: true, permission: 'pos:view' }
+        },
+        {
+          path: 'workbench',
+          name: 'OrderWorkbench',
+          component: () => import('@/views/workbench/OrderWorkbench.vue'),
+          meta: { title: '工作台', requiresAuth: true, permission: 'workbench:view' }
+        },
+        {
           path: 'products',
           name: 'Products',
           component: () => import('@/views/products/ProductList.vue'),
@@ -79,6 +91,24 @@ router.beforeEach((to, from, next) => {
   } else {
     next()
   }
+})
+
+const isDynamicImportError = (err) => {
+  const msg = String(err?.message || err || '')
+  return (
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('Importing a module script failed') ||
+    msg.includes('Loading chunk') ||
+    msg.includes('ChunkLoadError')
+  )
+}
+
+router.onError((err) => {
+  if (!isDynamicImportError(err)) return
+  const key = `__reload_once__${location.pathname}${location.search}${location.hash}`
+  if (sessionStorage.getItem(key)) return
+  sessionStorage.setItem(key, '1')
+  location.reload()
 })
 
 export default router

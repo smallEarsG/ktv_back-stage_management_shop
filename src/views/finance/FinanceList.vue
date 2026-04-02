@@ -3,37 +3,21 @@ import { ref, onMounted } from 'vue'
 import { Download, Top, Bottom } from '@element-plus/icons-vue'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
 import request from '@/lib/request'
+import dayjs from 'dayjs'
+import axios from 'axios'
+import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/user'
 
 const dateRange = ref([])
 const currentLabel = ref('今日')
 const loading = ref(false)
 const transactions = ref([])
-
-// TODO: The API documentation doesn't specify a dedicated finance stats endpoint structure clearly matching this UI.
-// Assuming we fetch stats and transactions separately or together.
-// For now, I'll mock the stats part based on the UI requirement or use a placeholder API call if one existed.
-// Since API doc mentions /finance/stats (which I might have missed or it was implicit), let's assume it exists or use dashboard stats logic.
-// Actually, looking at the API doc again, there isn't a dedicated "Finance" section with stats endpoint.
-// I will implement the transaction list fetching which is more likely to be supported by a generic order/transaction endpoint or similar.
-// Wait, I missed section 6 (Refunds) and maybe others?
-// Let's check the API doc content again.
-// The user provided API doc has:
-// 1. Auth, 2. Dashboard, 3. Rooms, 4. Products, 5. Orders, 6. Refunds, 7. Warehouse, 8. Configs.
-// It seems there is NO specific "Finance" API section in the provided markdown.
-// However, the Dashboard stats (2.1) returns sales, orders, refunds.
-// I will use /dashboard/stats for the top cards, and /orders (or similar) for transactions.
-// Or better, I'll stick to the UI and maybe mock the data for now if no endpoint is available, 
-// OR repurpose /orders and /refunds to build the view.
-
-// To be safe and compliant with the "Integrate API" task, I will try to use the Dashboard API for stats 
-// and maybe mock the transaction list since there isn't a clear "transaction history" endpoint 
-// other than Orders/Refunds lists. 
-// Actually, let's look at the previous `FinanceList.vue` mock data:
-// It has "income" and "refund".
-// I'll simulate this by fetching recent orders and refunds and combining them, or just leave it as mock if appropriate.
-
-// BUT, looking at the prompt "利用接口文档为项目接入接口", if the interface is missing, I should probably report it or implement what I can.
-// I will implement fetching Dashboard Stats for the top cards.
+const userStore = useUserStore()
+const flowType = ref('')
+const keyword = ref('')
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const stats = ref({
   income: { amount: 0, trend: 'up', percentage: 0 },
@@ -41,36 +25,67 @@ const stats = ref({
   net: { amount: 0, trend: 'up', percentage: 0 }
 })
 
+const periodMap = {
+  今日: 'today',
+  昨日: 'yesterday',
+  本周: 'week',
+  本月: 'month',
+  本年: 'year',
+  自定义: 'custom'
+}
+
+const normalizeNum = (v) => Number(v ?? 0) || 0
+
+const buildParams = (forFlow = false) => {
+  const period = periodMap[currentLabel.value] || 'today'
+  const params = { period }
+  if (period === 'custom') {
+    const hasRange = Array.isArray(dateRange.value) && dateRange.value[0] && dateRange.value[1]
+    if (hasRange) {
+      params.startTime = dayjs(dateRange.value[0]).format('YYYY-MM-DD HH:mm:ss')
+      params.endTime = dayjs(dateRange.value[1]).format('YYYY-MM-DD HH:mm:ss')
+    }
+  }
+  if (forFlow) {
+    params.page = page.value
+    params.pageSize = pageSize.value
+    if (flowType.value) params.type = flowType.value
+    if (keyword.value) params.keyword = keyword.value
+  }
+  return params
+}
+
+const fetchSummary = async () => {
+  const res = await request.get('/finance/summary', { params: buildParams(false) })
+  stats.value = {
+    income: {
+      amount: normalizeNum(res?.income?.amount),
+      trend: res?.income?.trend === 'down' ? 'down' : 'up',
+      percentage: normalizeNum(res?.income?.percentage)
+    },
+    refund: {
+      amount: normalizeNum(res?.refund?.amount),
+      trend: res?.refund?.trend === 'up' ? 'up' : 'down',
+      percentage: normalizeNum(res?.refund?.percentage)
+    },
+    net: {
+      amount: normalizeNum(res?.net?.amount),
+      trend: res?.net?.trend === 'down' ? 'down' : 'up',
+      percentage: normalizeNum(res?.net?.percentage)
+    }
+  }
+}
+
+const fetchFlows = async () => {
+  const res = await request.get('/finance/flows', { params: buildParams(true) })
+  total.value = normalizeNum(res?.total)
+  transactions.value = Array.isArray(res?.list) ? res.list : []
+}
+
 const fetchFinanceData = async () => {
   loading.value = true
   try {
-    // 1. Fetch Stats (Reusing dashboard stats for now as it contains sales/refunds)
-    const statsRes = await request.get('/dashboard/stats', {
-      params: { dateRange: 'today' }
-    })
-    
-    // Map dashboard stats to finance stats
-    stats.value.income.amount = statsRes.sales.amount
-    stats.value.income.trend = statsRes.sales.trend
-    stats.value.income.percentage = statsRes.sales.percentage
-    
-    stats.value.refund.amount = statsRes.refunds.amount
-    // Mock trends for refund/net as they might not be in dashboard stats
-    stats.value.net.amount = statsRes.sales.amount - statsRes.refunds.amount
-
-    // 2. Fetch Transactions (Mocking by combining Orders and Refunds or just using Orders for now)
-    // Since there is no /finance/transactions endpoint, I will leave the transaction list as static/mock 
-    // OR fetch orders and map them. Let's fetch orders.
-    const ordersRes = await request.get('/orders', { params: { page: 1, pageSize: 10 } })
-    
-    transactions.value = ordersRes.list.map(order => ({
-      id: order.id,
-      type: 'income',
-      amount: order.amount,
-      source: `订单支付 - ${order.roomName}`,
-      time: order.createdAt
-    }))
-    
+    await Promise.all([fetchSummary(), fetchFlows()])
   } catch (e) {
     console.error(e)
   } finally {
@@ -79,13 +94,58 @@ const fetchFinanceData = async () => {
 }
 
 const handleDateRangeChange = (range) => {
-  console.log('Finance date range:', range)
   dateRange.value = range
+  page.value = 1
   fetchFinanceData()
 }
 
 const handleLabelChange = (label) => {
   currentLabel.value = label
+}
+
+const handleSearch = () => {
+  page.value = 1
+  fetchFinanceData()
+}
+
+const handlePageChange = (val) => {
+  page.value = val
+  fetchFinanceData()
+}
+
+const handlePageSizeChange = (val) => {
+  pageSize.value = val
+  page.value = 1
+  fetchFinanceData()
+}
+
+const exportFlows = async () => {
+  try {
+    const params = buildParams(true)
+    delete params.page
+    delete params.pageSize
+    const res = await axios.get('/api/finance/flows/export', {
+      params,
+      responseType: 'blob',
+      headers: {
+        Authorization: userStore.token ? `Bearer ${userStore.token}` : '',
+        'X-Store-Id': userStore.currentStoreId || '1001'
+      }
+    })
+    const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `finance-flows-${dayjs().format('YYYYMMDDHHmmss')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('导出失败')
+  }
 }
 
 onMounted(() => {
@@ -95,7 +155,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+    <div class="flex flex-col gap-4 justify-between items-start mb-6 md:flex-row md:items-center">
       <h2 class="text-2xl font-bold text-slate-800">财务管理</h2>
       <TimeRangePicker 
         v-model="dateRange" 
@@ -104,33 +164,33 @@ onMounted(() => {
       />
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    <div class="grid grid-cols-1 gap-6 mb-6 md:grid-cols-3">
       <el-card>
-        <div class="text-slate-500 text-sm">{{ currentLabel }}收入</div>
-        <div class="text-2xl font-bold text-green-600 mt-2">¥ {{ stats.income.amount.toFixed(2) }}</div>
-        <div class="text-xs mt-1 text-slate-400">
+        <div class="text-sm text-slate-500">{{ currentLabel }}收入</div>
+        <div class="mt-2 text-2xl font-bold text-green-600">¥ {{ stats.income.amount.toFixed(2) }}</div>
+        <div class="mt-1 text-xs text-slate-400">
           <span>同比</span>
-          <span :class="stats.income.trend === 'up' ? 'text-red-500' : 'text-green-500'" class="font-bold ml-1">
+          <span :class="stats.income.trend === 'up' ? 'text-red-500' : 'text-green-500'" class="ml-1 font-bold">
             <el-icon><Top v-if="stats.income.trend === 'up'" /><Bottom v-else /></el-icon> {{ stats.income.percentage }}%
           </span>
         </div>
       </el-card>
       <el-card>
-        <div class="text-slate-500 text-sm">{{ currentLabel }}退款</div>
-        <div class="text-2xl font-bold text-red-600 mt-2">¥ {{ stats.refund.amount.toFixed(2) }}</div>
-        <div class="text-xs mt-1 text-slate-400">
+        <div class="text-sm text-slate-500">{{ currentLabel }}退款</div>
+        <div class="mt-2 text-2xl font-bold text-red-600">¥ {{ stats.refund.amount.toFixed(2) }}</div>
+        <div class="mt-1 text-xs text-slate-400">
           <span>同比</span>
-          <span class="text-green-500 font-bold ml-1">
+          <span class="ml-1 font-bold text-green-500">
             <el-icon><Bottom /></el-icon> --%
           </span>
         </div>
       </el-card>
       <el-card>
-        <div class="text-slate-500 text-sm">实际营收</div>
-        <div class="text-2xl font-bold text-blue-600 mt-2">¥ {{ stats.net.amount.toFixed(2) }}</div>
-        <div class="text-xs mt-1 text-slate-400">
+        <div class="text-sm text-slate-500">实际营收</div>
+        <div class="mt-2 text-2xl font-bold text-blue-600">¥ {{ stats.net.amount.toFixed(2) }}</div>
+        <div class="mt-1 text-xs text-slate-400">
           <span>同比</span>
-          <span class="text-red-500 font-bold ml-1">
+          <span class="ml-1 font-bold text-red-500">
             <el-icon><Top /></el-icon> --%
           </span>
         </div>
@@ -141,7 +201,15 @@ onMounted(() => {
       <template #header>
         <div class="flex justify-between items-center">
           <span class="font-bold">资金流水</span>
-          <el-button :icon="Download">导出报表</el-button>
+          <div class="flex gap-2 items-center">
+            <el-select v-model="flowType" class="w-32" placeholder="类型筛选" clearable @change="handleSearch">
+              <el-option label="收入" value="income" />
+              <el-option label="退款" value="refund" />
+            </el-select>
+            <el-input v-model="keyword" placeholder="订单号搜索" class="w-48" clearable @keyup.enter="handleSearch" @clear="handleSearch" />
+            <el-button @click="handleSearch">查询</el-button>
+            <el-button :icon="Download" @click="exportFlows">导出报表</el-button>
+          </div>
         </div>
       </template>
       
@@ -163,6 +231,18 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+      <div class="flex justify-end mt-4">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :page-size="pageSize"
+          :current-page="page"
+          :page-sizes="[20, 50, 100, 200]"
+          @current-change="handlePageChange"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </el-card>
   </div>
 </template>

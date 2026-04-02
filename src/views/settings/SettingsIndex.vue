@@ -1,9 +1,33 @@
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/lib/request'
 
 const activeTab = ref('store')
+
+const roomLoading = ref(false)
+const roomList = ref([])
+const roomQuery = reactive({
+  type: '',
+  keyword: ''
+})
+const roomDialogVisible = ref(false)
+const roomFormRef = ref(null)
+const roomForm = reactive({
+  id: null,
+  roomNumber: '',
+  type: '',
+  capacity: 0,
+  qrCodeUrl: '',
+  isAvailable: true
+})
+const roomRules = {
+  roomNumber: [{ required: true, message: '请输入房间号', trigger: 'blur' }],
+  type: [{ required: true, message: '请选择类型', trigger: 'change' }],
+  capacity: [{ required: true, message: '请输入容纳人数', trigger: 'blur' }]
+}
+
+const roomTypes = ['小包', '中包', '大包', '散座']
 
 // Staff Management Logic
 const staffList = ref([])
@@ -49,7 +73,7 @@ const submitStaff = async () => {
         const userInfo = localStorage.getItem('userInfo') ? JSON.parse(localStorage.getItem('userInfo')) : {}
         const storeId = userInfo.storeId || 0
         
-        const res = await request.post('/auth/register', {
+        await request.post('/auth/register', {
           username: staffForm.username,
           password: staffForm.password,
           nickname: staffForm.name,
@@ -57,11 +81,9 @@ const submitStaff = async () => {
           phone: staffForm.phone,
           storeId: storeId // Add storeId from current user context
         })
-        if (res.code === 200) {
-          ElMessage.success('添加成功')
-          staffDialogVisible.value = false
-          getStaffList()
-        }
+        ElMessage.success('添加成功')
+        staffDialogVisible.value = false
+        getStaffList()
       } catch (error) {
         // Error handled
       }
@@ -80,10 +102,9 @@ const getStaffList = async () => {
         phone: staffQuery.phone || undefined
       }
     })
-    if (res.code === 200) {
-      staffList.value = res.data.records
-      staffTotal.value = res.data.total
-    }
+    const data = res?.data ?? res ?? {}
+    staffList.value = data?.records || data?.list || data?.rows || []
+    staffTotal.value = Number(data?.total ?? res?.total ?? 0) || 0
   } catch (error) {
     console.error(error)
   } finally {
@@ -125,16 +146,14 @@ const submitEditProfile = async () => {
   await editProfileFormRef.value.validate(async (valid) => {
     if (valid) {
       try {
-        const res = await request.put(`/users/${editProfileForm.id}`, {
+        await request.put(`/users/${editProfileForm.id}`, {
           nickname: editProfileForm.nickname,
           phone: editProfileForm.phone,
           isActive: editProfileForm.isActive
         })
-        if (res.code === 200) {
-          ElMessage.success('更新成功')
-          editProfileDialogVisible.value = false
-          getStaffList()
-        }
+        ElMessage.success('更新成功')
+        editProfileDialogVisible.value = false
+        getStaffList()
       } catch (error) {
         // Error handled
       }
@@ -150,6 +169,8 @@ const permissionForm = reactive({
 })
 const availablePermissions = [
   { label: '查看看板', value: 'dashboard:view' },
+  { label: '收银台', value: 'pos:view' },
+  { label: '工作台', value: 'workbench:view' },
   { label: '订单管理', value: 'order:view' },
   { label: '商品管理', value: 'product:view' },
   { label: '退款管理', value: 'refund:view' },
@@ -178,15 +199,13 @@ const handlePermissionSet = (row) => {
 
 const submitPermission = async () => {
   try {
-    const res = await request.put(`/users/${permissionForm.id}/role`, {
+    await request.put(`/users/${permissionForm.id}/role`, {
       role: permissionForm.role,
       permissions: permissionForm.permissions
     })
-    if (res.code === 200) {
-      ElMessage.success('权限更新成功')
-      permissionDialogVisible.value = false
-      getStaffList()
-    }
+    ElMessage.success('权限更新成功')
+    permissionDialogVisible.value = false
+    getStaffList()
   } catch (error) {
     // Error handled
   }
@@ -209,11 +228,9 @@ const handleDeleteStaff = (row) => {
   )
     .then(async () => {
       try {
-        const res = await request.delete(`/users/${row.id}`)
-        if (res.code === 200) {
-          ElMessage.success('删除成功')
-          getStaffList() // Refresh list
-        }
+        await request.delete(`/users/${row.id}`)
+        ElMessage.success('删除成功')
+        getStaffList()
       } catch (error) {
         // Error handled by interceptor
       }
@@ -228,19 +245,128 @@ const handleStaffPageChange = (page) => {
   getStaffList()
 }
 
+const getRoomList = async () => {
+  roomLoading.value = true
+  try {
+    const res = await request.get('/rooms', {
+      params: {
+        type: roomQuery.type || undefined
+      }
+    })
+    const list = res?.list || []
+    const kw = String(roomQuery.keyword || '').trim().toLowerCase()
+    roomList.value = kw
+      ? list.filter(r => String(r?.roomNumber || '').toLowerCase().includes(kw))
+      : list
+  } catch (error) {
+    console.error(error)
+  } finally {
+    roomLoading.value = false
+  }
+}
+
+const resetRoomForm = () => {
+  roomForm.id = null
+  roomForm.roomNumber = ''
+  roomForm.type = ''
+  roomForm.capacity = 0
+  roomForm.qrCodeUrl = ''
+  roomForm.isAvailable = true
+}
+
+const handleAddRoom = () => {
+  resetRoomForm()
+  roomDialogVisible.value = true
+}
+
+const handleEditRoom = async (row) => {
+  resetRoomForm()
+  roomDialogVisible.value = true
+  try {
+    const res = await request.get(`/rooms/${row.id}`)
+    roomForm.id = res?.id ?? row.id
+    roomForm.roomNumber = res?.roomNumber ?? row.roomNumber ?? ''
+    roomForm.type = res?.type ?? row.type ?? ''
+    roomForm.capacity = Number(res?.capacity ?? row.capacity ?? 0) || 0
+    roomForm.qrCodeUrl = res?.qrCodeUrl ?? row.qrCodeUrl ?? ''
+    roomForm.isAvailable = res?.isAvailable !== false
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+const submitRoom = async () => {
+  if (!roomFormRef.value) return
+  await roomFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    try {
+      const body = {
+        roomNumber: roomForm.roomNumber,
+        type: roomForm.type,
+        capacity: Number(roomForm.capacity),
+        qrCodeUrl: roomForm.qrCodeUrl || undefined,
+        isAvailable: roomForm.isAvailable
+      }
+      if (roomForm.id) {
+        await request.put(`/rooms/${roomForm.id}`, body)
+        ElMessage.success('更新成功')
+      } else {
+        await request.post('/rooms', body)
+        ElMessage.success('添加成功')
+      }
+      roomDialogVisible.value = false
+      getRoomList()
+    } catch (error) {
+      console.error(error)
+    }
+  })
+}
+
+const handleDeleteRoom = (row) => {
+  ElMessageBox.confirm(`确定要删除房间 "${row.roomNumber}" 吗?`, '警告', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+    .then(async () => {
+      try {
+        await request.delete(`/rooms/${row.id}`)
+        ElMessage.success('删除成功')
+        getRoomList()
+      } catch (error) {
+        console.error(error)
+      }
+    })
+    .catch(() => {})
+}
+
+const downloadQr = (row) => {
+  const url = row?.qrCodeUrl
+  if (!url) {
+    ElMessage.warning('该房间暂无二维码地址')
+    return
+  }
+  window.open(url, '_blank')
+}
+
 // Initial Load
 onMounted(() => {
   // Only load staff if tab is active (or load on tab switch, but simple here)
   if (activeTab.value === 'staff') {
     getStaffList()
   }
+  if (activeTab.value === 'rooms') {
+    getRoomList()
+  }
 })
 
 // Watch tab change to load data
-import { watch } from 'vue'
 watch(activeTab, (val) => {
   if (val === 'staff') {
     getStaffList()
+  }
+  if (val === 'rooms') {
+    getRoomList()
   }
 })
 </script>
@@ -269,21 +395,67 @@ watch(activeTab, (val) => {
       </el-tab-pane>
       
       <el-tab-pane label="房间/座位管理" name="rooms">
-        <div class="mb-4">
-          <el-button type="primary">添加房间</el-button>
-          <el-button type="success">批量生成二维码</el-button>
+        <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
+          <div class="flex flex-wrap gap-2 items-center">
+            <el-select v-model="roomQuery.type" placeholder="类型" clearable class="w-32" @change="getRoomList">
+              <el-option v-for="t in roomTypes" :key="t" :label="t" :value="t" />
+            </el-select>
+            <el-input v-model="roomQuery.keyword" placeholder="搜索房间号" clearable class="w-44" @clear="getRoomList" />
+            <el-button type="primary" @click="getRoomList">查询</el-button>
+          </div>
+          <div class="flex gap-2">
+            <el-button type="primary" @click="handleAddRoom">添加房间</el-button>
+            <el-button @click="getRoomList">刷新</el-button>
+          </div>
         </div>
-        <el-table :data="[{name: 'A01', type: '小包', capacity: 4}, {name: 'B01', type: '中包', capacity: 8}]" border>
-          <el-table-column prop="name" label="房间号" />
-          <el-table-column prop="type" label="类型" />
-          <el-table-column prop="capacity" label="容纳人数" />
-          <el-table-column label="操作">
-            <template #default>
-              <el-button link type="primary">下载二维码</el-button>
-              <el-button link type="primary">编辑</el-button>
+
+        <el-table :data="roomList" border v-loading="roomLoading">
+          <el-table-column prop="roomNumber" label="房间号" width="140" />
+          <el-table-column prop="type" label="类型" width="120" />
+          <el-table-column prop="capacity" label="容纳人数" width="120" align="right" />
+          <el-table-column label="可用" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.isAvailable === false ? 'info' : 'success'" effect="plain">
+                {{ row.isAvailable === false ? '不可用' : '可用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="220">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="downloadQr(row)">二维码</el-button>
+              <el-button link type="primary" @click="handleEditRoom(row)">编辑</el-button>
+              <el-button link type="danger" @click="handleDeleteRoom(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
+
+        <el-dialog v-model="roomDialogVisible" :title="roomForm.id ? '编辑房间' : '添加房间'" width="520px">
+          <el-form :model="roomForm" :rules="roomRules" ref="roomFormRef" label-width="90px">
+            <el-form-item label="房间号" prop="roomNumber">
+              <el-input v-model="roomForm.roomNumber" placeholder="例如 A01" />
+            </el-form-item>
+            <el-form-item label="类型" prop="type">
+              <el-select v-model="roomForm.type" placeholder="请选择类型" class="w-full">
+                <el-option v-for="t in roomTypes" :key="t" :label="t" :value="t" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="容纳人数" prop="capacity">
+              <el-input-number v-model="roomForm.capacity" :min="1" class="w-full" />
+            </el-form-item>
+            <el-form-item label="二维码地址">
+              <el-input v-model="roomForm.qrCodeUrl" placeholder="https://..." />
+            </el-form-item>
+            <el-form-item label="可用">
+              <el-switch v-model="roomForm.isAvailable" active-text="可用" inactive-text="不可用" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <span class="dialog-footer">
+              <el-button @click="roomDialogVisible = false">取消</el-button>
+              <el-button type="primary" @click="submitRoom">确定</el-button>
+            </span>
+          </template>
+        </el-dialog>
       </el-tab-pane>
       
       <el-tab-pane label="支付配置" name="payment">

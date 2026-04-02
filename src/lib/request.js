@@ -27,7 +27,7 @@ service.interceptors.request.use(
     return config
   },
   (error) => {
-    console.error('Request Error:', error)
+    console.log('API Error:', res)
     return Promise.reject(error)
   }
 )
@@ -36,9 +36,10 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   (response) => {
     const res = response.data
-
+      console.error('API Error:', response)
     // Check custom code
     if (res.code !== 200) {
+     
       ElMessage.error(res.message || 'Error')
 
       // Handle specific error codes (e.g., 401 Unauthorized)
@@ -46,6 +47,7 @@ service.interceptors.response.use(
         const userStore = useUserStore()
         userStore.logout()
         location.reload()
+
       }
       return Promise.reject(new Error(res.message || 'Error'))
     } else {
@@ -53,7 +55,6 @@ service.interceptors.response.use(
     }
   },
   (error) => {
-    console.error('Response Error:', error)
     ElMessage.error(error.message || 'Request Failed')
     return Promise.reject(error)
   }

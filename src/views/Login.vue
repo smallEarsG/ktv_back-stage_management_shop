@@ -14,6 +14,22 @@ const form = reactive({
   password: ''
 })
 
+const firstAllowedPath = () => {
+  const nav = [
+    { path: '/dashboard', permission: 'dashboard:view' },
+    { path: '/pos/index', permission: 'pos:view' },
+    { path: '/workbench', permission: 'workbench:view' },
+    { path: '/orders', permission: 'order:view' },
+    { path: '/products', permission: 'product:view' },
+    { path: '/refunds', permission: 'refund:view' },
+    { path: '/finance', permission: 'finance:view' },
+    { path: '/warehouse', permission: 'warehouse:view' },
+    { path: '/settings', permission: 'settings:view' }
+  ]
+  const hit = nav.find(i => userStore.hasPermission(i.permission))
+  return hit?.path || ''
+}
+
 const handleLogin = async () => {
   if (!form.phone || !form.password) {
     ElMessage.warning('请输入手机号和密码')
@@ -28,8 +44,14 @@ const handleLogin = async () => {
     })
     
     if (success) {
+      const target = firstAllowedPath()
+      if (!target) {
+        ElMessage.warning('该账号无权限，请联系管理员')
+        router.replace('/403')
+        return
+      }
       ElMessage.success('登录成功')
-      router.push('/dashboard')
+      router.replace(target)
     }
   } finally {
     loading.value = false

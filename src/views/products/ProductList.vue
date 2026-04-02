@@ -17,6 +17,12 @@ const uploadFileList = ref([])
 const showImagePreview = ref(false)
 const previewImageUrl = ref('')
 const maxImageSizeMB = 2
+const showDetailDialog = ref(false)
+const detailProduct = ref(null)
+let skuKeySeed = 1
+const showSkuAttrDialog = ref(false)
+const skuAttrTarget = ref({ index: -1 })
+const skuAttrDraft = ref([])
 const queryParams = reactive({
   page: 1,
   pageSize: 20,
@@ -26,15 +32,11 @@ const queryParams = reactive({
 const productForm = reactive({
   id: null,
   name: '',
-  price: 0,
-  stock: 0,
   categoryId: '',
   image: '',
   status: true,
   detail: '',
-  lowStockThreshold: 10,
   hasSkus: false,
-  stockType: 'independent', // 'independent' | 'shared'
   specs: [],
   skus: []
 })
@@ -53,46 +55,7 @@ const productRules = {
       trigger: 'change'
     }
   ],
-  name: [{ required: true, message: '请输入商品名称', trigger: 'blur' }],
-  price: [
-    {
-      validator: (rule, value, callback) => {
-        const n = Number(value)
-        if (Number.isNaN(n) || n < 0) {
-          callback(new Error('请输入有效价格'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change'
-    }
-  ],
-  stock: [
-    {
-      validator: (rule, value, callback) => {
-        const n = Number(value)
-        if (!Number.isInteger(n) || n < 0) {
-          callback(new Error('请输入有效库存'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change'
-    }
-  ],
-  lowStockThreshold: [
-    {
-      validator: (rule, value, callback) => {
-        const n = Number(value)
-        if (!Number.isInteger(n) || n < 0) {
-          callback(new Error('请输入有效预警值'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change'
-    }
-  ]
+  name: [{ required: true, message: '请输入商品名称', trigger: 'blur' }]
 }
 
 const editCategoryForm = reactive({
@@ -130,10 +93,82 @@ const removeSpecValue = (index, vIndex) => {
   generateSkus()
 }
 
+const normalizeSpecs = (raw) => {
+  if (raw === null || raw === undefined) return {}
+  let specs = raw
+  if (typeof specs === 'string') {
+    try {
+      specs = JSON.parse(specs)
+    } catch {
+      return {}
+    }
+  }
+  if (Array.isArray(specs)) return {}
+  if (specs && typeof specs === 'object') return specs
+  return {}
+}
+
+const normalizeSku = (sku, fallbackThreshold = 10) => {
+  const specsRaw = sku?.specs ?? sku?.skuSpecs ?? sku?.sku_specs ?? sku?.skuSpecs
+  const attrJson = sku?.attrConfigJson ?? sku?.attr_config_json ?? (typeof sku?.attrConfig === 'string' ? sku?.attrConfig : '')
+  return {
+    id: sku?.id ?? null,
+    __key: sku?.id ? null : (sku?.__key ?? `sku_${skuKeySeed++}`),
+    specs: normalizeSpecs(specsRaw),
+    price: Number(sku?.price) || 0,
+    stock: Number(sku?.stock ?? sku?.stockQuantity ?? sku?.stock_quantity ?? sku?.stockQuantity) || 0,
+    lowStockThreshold: Number(sku?.lowStockThreshold ?? fallbackThreshold) || 0,
+    skuCode: sku?.skuCode ?? sku?.sku_code ?? sku?.code ?? '',
+    attrConfigJson: typeof attrJson === 'string' && attrJson.trim() ? attrJson : '{}',
+    attrConfig: Array.isArray(sku?.attrConfig) ? sku.attrConfig : null
+  }
+}
+
+const normalizeProduct = (p) => {
+  const baseThreshold = Number(p?.lowStockThreshold ?? 10) || 10
+  const rawSkus = Array.isArray(p?.skus) ? p.skus : []
+  const skus = rawSkus.map(s => normalizeSku(s, baseThreshold))
+  if (!skus.length) {
+    skus.push({
+      id: null,
+      __key: `sku_${skuKeySeed++}`,
+      specs: {},
+      price: Number(p?.price) || 0,
+      stock: Number(p?.stock) || 0,
+      lowStockThreshold: baseThreshold,
+      skuCode: '',
+      attrConfigJson: '{}',
+      attrConfig: null
+    })
+  }
+  const specList = Array.isArray(p?.specList) ? p.specList : []
+  const hasSpecs = specList.length > 0 || skus.some(s => Object.keys(s?.specs || {}).length > 0)
+  return {
+    ...p,
+    price: Number(p?.price ?? 0) || 0,
+    stock: Number(p?.stock ?? 0) || 0,
+    lowStockThreshold: Number(p?.lowStockThreshold ?? baseThreshold) || baseThreshold,
+    skus,
+    specList,
+    hasSpecs
+  }
+}
+
 const generateSkus = () => {
   const specs = productForm.specs.filter(s => s.name && s.values.length > 0)
   if (specs.length === 0) {
-    productForm.skus = []
+    const existing = productForm.skus?.[0]
+    productForm.skus = [
+      {
+        id: existing?.id ?? null,
+        __key: existing?.__key ?? `sku_${skuKeySeed++}`,
+        specs: {},
+        price: Number(existing?.price) || 0,
+        stock: Number(existing?.stock) || 0,
+        lowStockThreshold: Number(existing?.lowStockThreshold ?? 10) || 10,
+        skuCode: existing?.skuCode ?? ''
+      }
+    ]
     return
   }
 
@@ -161,11 +196,14 @@ const generateSkus = () => {
     })
     return {
       id: existing?.id ?? null,
+      __key: existing?.__key ?? `sku_${skuKeySeed++}`,
       specs: combo,
-      price: existing?.price ?? productForm.price,
+      price: existing?.price ?? 0,
       stock: existing?.stock ?? 0,
-      deduct: existing?.deduct ?? 1,
-      skuCode: existing?.skuCode ?? existing?.code ?? ''
+      lowStockThreshold: existing?.lowStockThreshold ?? 10,
+      skuCode: existing?.skuCode ?? existing?.code ?? '',
+      attrConfigJson: (existing?.attrConfigJson && String(existing.attrConfigJson).trim()) ? String(existing.attrConfigJson).trim() : '{}',
+      attrConfig: existing?.attrConfig ?? null
     }
   })
 }
@@ -180,6 +218,7 @@ const fetchCategories = async () => {
       fetchProducts()
     }
   } catch (e) {
+    console.log('fetchCategories:', e)
     console.error(e)
   }
 }
@@ -194,7 +233,7 @@ const fetchProducts = async () => {
     const res = await request.get('/products', {
       params
     })
-    products.value = res.list || []
+    products.value = (res.list || []).map(normalizeProduct)
     total.value = res.total || 0
   } catch (e) {
     console.error(e)
@@ -206,87 +245,86 @@ const fetchProducts = async () => {
 const handleAdd = () => {
   productForm.id = null
   productForm.name = ''
-  productForm.price = 0
-  productForm.stock = 0
-  productForm.categoryId = activeCategory.value
+  productForm.categoryId =
+    activeCategory.value && activeCategory.value !== allCategoryId
+      ? String(activeCategory.value)
+      : (categories.value?.[0]?.id ? String(categories.value[0].id) : '')
   productForm.image = ''
   productForm.status = true
   productForm.detail = ''
   productForm.hasSkus = false
-  productForm.stockType = 'independent'
   productForm.specs = []
-  productForm.skus = []
+  productForm.skus = [
+    {
+      id: null,
+      __key: `sku_${skuKeySeed++}`,
+      specs: {},
+      price: 0,
+      stock: 0,
+      lowStockThreshold: 10,
+      skuCode: '',
+      attrConfigJson: '{}',
+      attrConfig: null
+    }
+  ]
   uploadFileList.value = []
   showEditDialog.value = true
 }
 
 const handleEdit = (row) => {
-  const p = { ...row }
-  // Normalize SKUs: handle stringified specs and field variants
-  if (p.skus && Array.isArray(p.skus)) {
-    p.skus = p.skus.map(sku => {
-      let specs = sku.specs || sku.sku_specs || sku.skuSpecs || {}
-      if (typeof specs === 'string') {
-        try {
-          specs = JSON.parse(specs)
-        } catch (e) {
-          console.error('Failed to parse specs', e)
-          specs = {}
-        }
-      }
-      return {
-        ...sku,
-        specs
-      }
-    })
-  }
+  const p = normalizeProduct({ ...row })
   productForm.id = p.id ?? null
   productForm.name = p.name ?? ''
-  productForm.categoryId = p.categoryId ?? activeCategory.value
+  productForm.categoryId =
+    p.categoryId !== undefined && p.categoryId !== null && String(p.categoryId) !== allCategoryId
+      ? String(p.categoryId)
+      : (activeCategory.value && activeCategory.value !== allCategoryId ? String(activeCategory.value) : (categories.value?.[0]?.id ? String(categories.value[0].id) : ''))
   productForm.image = p.image ?? p.image_url ?? ''
   productForm.status = Boolean(p.status ?? true)
   productForm.detail = p.detail ?? ''
-  productForm.lowStockThreshold = Number(p.lowStockThreshold ?? productForm.lowStockThreshold ?? 10)
-  productForm.stockType = p.stockType ?? 'independent'
-  const hasSkus = Boolean(p.hasSkus ?? ((Array.isArray(p.specList) && p.specList.length) || (Array.isArray(p.skus) && p.skus.length)))
-  productForm.hasSkus = hasSkus
-  if (!hasSkus) {
-    productForm.price = Number(p.price) || 0
-    productForm.stock = Number(p.stock) || 0
-    productForm.specs = []
-    productForm.skus = []
-  } else {
-    const names = Array.isArray(p.specList) && p.specList.length ? p.specList.map(s => s.name) : getSpecNames(p)
-    const valuesMap = {}
-    ;(p.skus || []).forEach(sku => {
-      const specsObj = sku.specs ?? sku.sku_specs ?? sku.skuSpecs ?? {}
-      names.forEach(n => {
-        const v = specsObj?.[n]
-        if (v !== undefined) {
-          ;(valuesMap[n] = valuesMap[n] || []).push(v)
-        }
-      })
+  const names = Array.isArray(p.specList) && p.specList.length ? p.specList.map(s => s.name) : getSpecNames(p)
+  productForm.hasSkus = Boolean(p.hasSpecs && names.length)
+  const valuesMap = {}
+  ;(p.skus || []).forEach(sku => {
+    const specsObj = sku.specs || {}
+    names.forEach(n => {
+      const v = specsObj?.[n]
+      if (v !== undefined) {
+        ;(valuesMap[n] = valuesMap[n] || []).push(v)
+      }
     })
-    productForm.specs = names.map(n => ({
-      name: n || '',
-      values: Array.from(new Set(valuesMap[n] || [])),
-      tempValue: ''
-    }))
-    productForm.skus = (p.skus || []).map(sku => ({
-      id: sku.id ?? null,
-      specs: sku.specs ?? sku.sku_specs ?? sku.skuSpecs ?? {},
-      price: Number(sku.price) || 0,
-      stock: Number(sku.stock ?? sku.stock_quantity ?? sku.stockQuantity) || 0,
-      deduct: Number(sku.deduct ?? sku.stock_deduct_count ?? sku.stockDeductCount ?? 1) || 1,
-      skuCode: sku.code ?? sku.sku_code ?? sku.skuCode ?? ''
-    }))
-    productForm.stock = Number(p.stock) || Number(productForm.stock) || 0
-    productForm.price = Number(p.price) || (productForm.skus.length ? Math.min(...productForm.skus.map(s => Number(s.price) || 0)) : 0)
+  })
+  productForm.specs = productForm.hasSkus
+    ? names.map(n => ({
+        name: n || '',
+        values: Array.from(new Set(valuesMap[n] || [])),
+        tempValue: ''
+      }))
+    : []
+  productForm.skus = (p.skus || []).map(sku => normalizeSku(sku, 10))
+  if (!productForm.skus.length) {
+    productForm.skus = [
+      {
+        id: null,
+        __key: `sku_${skuKeySeed++}`,
+        specs: {},
+        price: 0,
+        stock: 0,
+        lowStockThreshold: 10,
+        skuCode: '',
+        attrConfigJson: '{}',
+        attrConfig: null
+      }
+    ]
   }
   uploadFileList.value = (p.image || p.image_url) ? [{ name: p.name || 'image', url: p.image || p.image_url }] : []
   showEditDialog.value = true
 }
 
+const openProductDetail = (row) => {
+  detailProduct.value = normalizeProduct({ ...row })
+  showDetailDialog.value = true
+}
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(`确定删除商品「${row.name}」吗？该操作不可恢复。`, '删除确认', {
@@ -313,31 +351,70 @@ const handleDelete = async (row) => {
 }
 const saveProduct = async () => {
   try {
-    if (!productForm.id) {
-      const valid = await productFormRef.value?.validate?.()
-      if (!valid) return
+    const valid = await productFormRef.value?.validate?.()
+    if (!valid) return
+    if (!Array.isArray(productForm.skus) || productForm.skus.length === 0) {
+      ElMessage.error('至少需要 1 条SKU')
+      return
     }
-    
-    // 多规格模式下，自动计算总库存和最低价格
-    if (productForm.hasSkus && productForm.skus.length > 0) {
-      if (productForm.stockType === 'independent') {
-        productForm.stock = productForm.skus.reduce((sum, sku) => sum + (Number(sku.stock) || 0), 0)
-      } 
-      // 共享库存模式下，stock 以用户输入的 productForm.stock 为准，不需要覆盖
-      
-      const minPrice = Math.min(...productForm.skus.map(sku => Number(sku.price) || 0))
-      productForm.price = minPrice === Infinity ? 0 : minPrice
-    }
-    if (productForm.stockType === 'shared') {  // 共享状态下移除skuCode
-        productForm.skus.forEach(sku => {
-          delete sku.skuCode 
-        })
+    const intFieldsOk = (v) => Number.isInteger(Number(v)) && Number(v) >= 0
+    for (const sku of productForm.skus) {
+      const price = Number(sku.price)
+      if (!Number.isFinite(price) || price < 0) {
+        ElMessage.error('SKU价格不合法')
+        return
       }
+      if (!intFieldsOk(sku.stock)) {
+        ElMessage.error('SKU库存不合法')
+        return
+      }
+      if (!intFieldsOk(sku.lowStockThreshold)) {
+        ElMessage.error('SKU预警阈值不合法')
+        return
+      }
+      const cfg = sku?.attrConfig
+      const rawTxt = (sku?.attrConfigJson || '{}').trim() || '{}'
+      if (cfg && !Array.isArray(cfg)) {
+        ElMessage.error('SKU属性配置不合法')
+        return
+      }
+      if (!cfg && rawTxt) {
+        try {
+          JSON.parse(rawTxt)
+        } catch {
+          ElMessage.error('SKU属性配置不合法')
+          return
+        }
+      }
+    }
+    const totalStock = productForm.skus.reduce((sum, s) => sum + (Number(s.stock) || 0), 0)
+    const minPrice = Math.min(...productForm.skus.map(s => Number(s.price) || 0))
+    const minThreshold = Math.min(...productForm.skus.map(s => Number(s.lowStockThreshold) || 0))
+    const payload = {
+      name: productForm.name,
+      categoryId: productForm.categoryId,
+      image: productForm.image,
+      detail: productForm.detail,
+      active: Boolean(productForm.status),
+      specList: productForm.hasSkus ? productForm.specs.map(s => ({ name: s.name, values: s.values })) : [],
+      skus: productForm.skus.map(s => ({
+        id: s.id ?? null,
+        specs: productForm.hasSkus ? (s.specs || {}) : [],
+        price: Number(s.price) || 0,
+        stock: Number(s.stock) || 0,
+        lowStockThreshold: Number(s.lowStockThreshold) || 0,
+        skuCode: s.skuCode ?? '',
+        attrConfigJson: Array.isArray(s.attrConfig) ? JSON.stringify(s.attrConfig) : ((s.attrConfigJson || '{}').trim() || '{}')
+      })),
+      price: minPrice === Infinity ? 0 : minPrice,
+      stock: totalStock,
+      lowStockThreshold: minThreshold === Infinity ? 10 : minThreshold
+    }
     if (productForm.id) {
-      await request.put(`/products/${productForm.id}`, productForm)
+      await request.put(`/products/${productForm.id}`, payload)
       ElMessage.success('更新成功')
     } else {
-      await request.post('/products', productForm)
+      await request.post('/products', payload)
       ElMessage.success('创建成功')
     }
     showEditDialog.value = false
@@ -474,33 +551,17 @@ const onSelectCategory = (index) => {
 }
 
 const displayTotalStock = computed(() => {
-  if (!productForm.hasSkus) return productForm.stock
-  if (productForm.stockType === 'shared') return productForm.stock
   return productForm.skus.reduce((sum, sku) => sum + (Number(sku.stock) || 0), 0)
 })
 
 const displayMinPrice = computed(() => {
-  if (!productForm.hasSkus) return productForm.price
   if (!productForm.skus.length) return 0
   const min = Math.min(...productForm.skus.map(sku => Number(sku.price) || 0))
   return min === Infinity ? 0 : min
 })
 
-const estimateSharedSkuStock = (product, sku) => {
-  const total = Number(product?.stock) || 0
-  const deduct = Number(sku?.deduct ?? sku?.stockDeductCount ?? sku?.stock_deduct_count ?? 1) || 1
-  return Math.floor(total / deduct)
-}
-
-const getSkuSellableStock = (product, sku) => {
-  if (product?.stockType === 'shared') {
-    return estimateSharedSkuStock(product, sku)
-  }
-  return Number(sku?.stock ?? sku?.stock_quantity ?? sku?.stockQuantity) || 0
-}
-
 const getRowClass = ({ row }) => {
-  const threshold = Number(row.lowStockThreshold ?? 20)
+  const threshold = Number(row.lowStockThreshold ?? 10)
   return Number(row.stock) < threshold ? 'bg-red-50' : ''
 }
 
@@ -508,7 +569,126 @@ const getSpecNames = (product) => {
   const fromList = Array.isArray(product?.specList) ? product.specList.map(s => s.name) : []
   if (fromList.length) return fromList
   const firstSpecs = product?.skus?.[0]?.specs
-  return firstSpecs ? Object.keys(firstSpecs) : []
+  return firstSpecs && typeof firstSpecs === 'object' ? Object.keys(firstSpecs) : []
+}
+
+const getSkuAttrItems = (sku) => {
+  if (Array.isArray(sku?.attrConfig)) return sku.attrConfig
+  const raw = (sku?.attrConfigJson || '').trim()
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const getAttrNames = (items) => {
+  if (!Array.isArray(items)) return []
+  return items.map(it => String(it?.name ?? '').trim()).filter(Boolean)
+}
+
+const getProductAttrSummary = (product) => {
+  const names = new Set()
+  const skus = Array.isArray(product?.skus) ? product.skus : []
+  for (const sku of skus) {
+    for (const n of getAttrNames(getSkuAttrItems(sku))) {
+      names.add(n)
+    }
+  }
+  const list = Array.from(names)
+  return { count: list.length, names: list }
+}
+
+const normalizeAttrItems = (items) => {
+  if (!Array.isArray(items)) return []
+  return items.map(it => ({
+    name: String(it?.name ?? '').trim(),
+    type: it?.type === 'multi' ? 'multi' : 'single',
+    required: Boolean(it?.required),
+    options: Array.isArray(it?.options) ? it.options.map(v => String(v)).filter(Boolean) : [],
+    tempOption: ''
+  }))
+}
+
+const openSkuAttrDialog = (index) => {
+  skuAttrTarget.value = { index }
+  const sku = productForm.skus?.[index]
+  let items = []
+  if (Array.isArray(sku?.attrConfig)) {
+    items = sku.attrConfig
+  } else {
+    const raw = (sku?.attrConfigJson || '').trim()
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        items = Array.isArray(parsed) ? parsed : []
+      } catch {
+        items = []
+      }
+    }
+  }
+  skuAttrDraft.value = normalizeAttrItems(items)
+  showSkuAttrDialog.value = true
+}
+
+const applySkuAttrDialog = () => {
+  const idx = skuAttrTarget.value?.index ?? -1
+  if (idx < 0 || !productForm.skus?.[idx]) {
+    showSkuAttrDialog.value = false
+    return
+  }
+  const items = (skuAttrDraft.value || []).map(it => ({
+    name: String(it?.name ?? '').trim(),
+    type: it?.type === 'multi' ? 'multi' : 'single',
+    required: Boolean(it?.required),
+    options: Array.isArray(it?.options) ? it.options.map(v => String(v)).filter(Boolean) : []
+  }))
+  for (const it of items) {
+    if (!it.name) {
+      ElMessage.error('属性名不能为空')
+      return
+    }
+    if (!Array.isArray(it.options) || it.options.length === 0) {
+      ElMessage.error(`属性「${it.name}」至少需要 1 个选项`)
+      return
+    }
+  }
+  productForm.skus[idx].attrConfig = items
+  productForm.skus[idx].attrConfigJson = items.length ? JSON.stringify(items) : '{}'
+  showSkuAttrDialog.value = false
+}
+
+const addAttrItem = () => {
+  skuAttrDraft.value = skuAttrDraft.value || []
+  skuAttrDraft.value.push({
+    name: '',
+    type: 'single',
+    required: false,
+    options: [],
+    tempOption: ''
+  })
+}
+
+const removeAttrItem = (i) => {
+  skuAttrDraft.value.splice(i, 1)
+}
+
+const addAttrOption = (i) => {
+  const item = skuAttrDraft.value?.[i]
+  if (!item) return
+  const opt = String(item.tempOption || '').trim()
+  if (!opt) return
+  item.options = item.options || []
+  if (!item.options.includes(opt)) item.options.push(opt)
+  item.tempOption = ''
+}
+
+const removeAttrOption = (i, oi) => {
+  const item = skuAttrDraft.value?.[i]
+  if (!item?.options) return
+  item.options.splice(oi, 1)
 }
 
 
@@ -572,59 +752,6 @@ onMounted(() => {
       </template>
 
       <el-table :data="products" style="width: 100%" v-loading="loading" size="small" :row-class-name="getRowClass" :row-key="row => row.id || row.productId || row.code || row.name">
-        <el-table-column type="expand">
-          <template #default="{ row }">
-            <div v-if="row.hasSkus" class="p-3 rounded border bg-slate-50">
-              <div class="mb-2 text-sm text-slate-600">
-                <span>库存模式：</span>
-                <span class="font-bold">{{ row.stockType === 'shared' ? '共享库存' : '独立库存' }}</span>
-              </div>
-              <el-table
-                :data="row.skus || []"
-                size="small"
-                :fit="true"
-                :row-key="sku => sku.skuCode || (sku.specs ? Object.values(sku.specs).join('-') : '')"
-                :key="`${row.stockType || 'independent'}:${(row.specList?.length || 0)}:${(row.skus?.length || 0)}`"
-                class="w-full"
-              >
-                <el-table-column
-                  v-for="(name, idx) in (row.specList?.map(s => s.name) || (row.skus?.[0]?.specs ? Object.keys(row.skus[0].specs) : []))"
-                  :key="name || ('spec-' + idx)"
-                  :label="name || ('规格' + (idx + 1))"
-                >
-                  <template #default="scope">{{ scope.row.specs?.[name] }}</template>
-                </el-table-column>
-                <el-table-column label="价格" min-width="120">
-                  <template #default="scope">¥ {{ Number(scope.row.price || 0).toFixed(2) }}</template>
-                </el-table-column>
-                <template v-if="row.stockType === 'independent'" :key="'independent'">
-                  <el-table-column label="库存" min-width="100">
-                    <template #default="scope">{{ scope.row.stock ?? 0 }}</template>
-                  </el-table-column>
-                  <el-table-column label="可售库存" min-width="120">
-                    <template #default="scope">
-                      <span class="text-slate-500">{{ getSkuSellableStock(row, scope.row) }}</span>
-                    </template>
-                  </el-table-column>
-                </template>
-                <template v-else :key="'shared'">
-                  <el-table-column label="库存消耗" min-width="110">
-                    <template #default="scope">{{ scope.row.deduct ?? 1 }}</template>
-                  </el-table-column>
-                  <el-table-column label="可售库存(估算)" min-width="140">
-                    <template #default="scope">
-                      <span class="text-slate-500">{{ getSkuSellableStock(row, scope.row) }}</span>
-                    </template>
-                  </el-table-column>
-                </template>
-                <el-table-column label="编码" min-width="140">
-                  <template #default="scope">{{ scope.row.code || scope.row.skuCode || '' }}</template>
-                </el-table-column>
-              </el-table>
-            </div>
-            <div v-else class="px-3 py-3 text-sm rounded border text-slate-400 bg-slate-50">该商品为单规格，无SKU明细</div>
-          </template>
-        </el-table-column>
         <el-table-column prop="image" label="图片" width="80">
           <template #default="{ row }">
              <el-image :src="row.image" class="w-10 h-10 rounded bg-slate-200" fit="cover">
@@ -640,7 +767,7 @@ onMounted(() => {
         <el-table-column prop="detail" label="详情" min-width="220" show-overflow-tooltip />
         <el-table-column label="规格" min-width="160">
           <template #default="{ row }">
-            <template v-if="row.hasSkus">
+            <template v-if="row.hasSpecs">
               <div class="flex flex-wrap gap-1 items-center">
                 <el-tag
                   v-for="(spec, i) in (row.specList || [])"
@@ -658,12 +785,22 @@ onMounted(() => {
             </template>
           </template>
         </el-table-column>
+        <el-table-column label="属性" width="120">
+          <template #default="{ row }">
+            <template v-if="getProductAttrSummary(row).count">
+              <el-tooltip :content="getProductAttrSummary(row).names.join('、')" placement="top">
+                <el-tag effect="plain" round>{{ getProductAttrSummary(row).count }}项</el-tag>
+              </el-tooltip>
+            </template>
+            <template v-else>—</template>
+          </template>
+        </el-table-column>
         <el-table-column prop="price" label="价格" width="110">
-          <template #default="{ row }"><span class="font-mono text-slate-700">¥ {{ row.price.toFixed(2) }}</span></template>
+          <template #default="{ row }"><span class="font-mono text-slate-700">¥ {{ Number(row.price || 0).toFixed(2) }}</span></template>
         </el-table-column>
         <el-table-column prop="stock" label="库存" width="110">
            <template #default="{ row }">
-             <el-tag :type="row.stock < (row.lowStockThreshold ?? 20) ? 'danger' : 'success'" round>{{ row.stock }}</el-tag>
+             <el-tag :type="Number(row.stock) < Number(row.lowStockThreshold ?? 10) ? 'danger' : 'success'" round>{{ row.stock }}</el-tag>
            </template>
         </el-table-column>
         <el-table-column prop="lowStockThreshold" label="低库存预警" width="120" />
@@ -672,120 +809,148 @@ onMounted(() => {
             <el-switch v-model="row.status" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="openProductDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
+    <el-dialog v-model="showDetailDialog" title="商品详情" width="720px">
+      <div v-if="detailProduct" class="space-y-4">
+        <div class="flex gap-4 items-start p-4 rounded border bg-slate-50">
+          <el-image :src="detailProduct.image" class="w-16 h-16 rounded bg-slate-200" fit="cover" />
+          <div class="flex-1">
+            <div class="text-lg font-bold">{{ detailProduct.name }}</div>
+            <div class="text-sm text-slate-600">{{ detailProduct.detail }}</div>
+            <div class="mt-2 text-sm">
+              <el-tag size="small" effect="plain">库存：{{ detailProduct.stock }}</el-tag>
+              <el-tag size="small" effect="plain" class="ml-2">价格：¥ {{ Number(detailProduct.price || 0).toFixed(2) }}</el-tag>
+            </div>
+          </div>
+        </div>
+        <div v-if="(detailProduct.skus || []).length" class="overflow-x-auto">
+          <el-table
+            :data="detailProduct.skus || []"
+            size="small"
+            :fit="true"
+            class="min-w-[680px]"
+            :row-key="sku => sku.id ?? sku.__key"
+          >
+            <el-table-column
+              v-for="(name, idx) in (detailProduct.specList?.map(s => s.name) || (detailProduct.skus?.[0]?.specs ? Object.keys(detailProduct.skus[0].specs) : []))"
+              :key="name || ('spec-' + idx)"
+              :label="name || ('规格' + (idx + 1))"
+            >
+              <template #default="scope">{{ scope.row.specs?.[name] }}</template>
+            </el-table-column>
+            <el-table-column label="价格" min-width="120">
+              <template #default="scope">¥ {{ Number(scope.row.price || 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="库存" min-width="100">
+              <template #default="scope">{{ scope.row.stock ?? 0 }}</template>
+            </el-table-column>
+            <el-table-column label="预警阈值" min-width="110">
+              <template #default="scope">{{ scope.row.lowStockThreshold ?? 10 }}</template>
+            </el-table-column>
+            <el-table-column label="属性" min-width="160">
+              <template #default="scope">
+                <template v-if="getAttrNames(getSkuAttrItems(scope.row)).length">
+                  <el-tooltip :content="getAttrNames(getSkuAttrItems(scope.row)).join('、')" placement="top">
+                    <span class="text-slate-600">{{ getAttrNames(getSkuAttrItems(scope.row)).join('、') }}</span>
+                  </el-tooltip>
+                </template>
+                <template v-else>—</template>
+              </template>
+            </el-table-column>
+            <el-table-column label="编码" min-width="140">
+              <template #default="scope">{{ scope.row.code || scope.row.skuCode || '' }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div v-else class="px-3 py-3 text-sm rounded border text-slate-400 bg-slate-50">暂无SKU</div>
+      </div>
+      <template #footer>
+        <el-button @click="showDetailDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="showEditDialog" :title="productForm.id ? '编辑商品' : '新增商品'" width="860px">
       <el-form label-width="80px" :model="productForm" :rules="productRules" ref="productFormRef">
         <el-form-item label="商品类型" prop="categoryId">
           <el-select v-model="productForm.categoryId" placeholder="请选择商品类型" class="w-full">
-            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
+            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="String(cat.id)" />
           </el-select>
         </el-form-item>
         <el-form-item label="商品名称" prop="name">
           <el-input v-model="productForm.name" placeholder="请输入商品名称" />
         </el-form-item>
-        <el-form-item label="多规格">
+        <el-form-item label="规格组合">
           <el-switch v-model="productForm.hasSkus" />
         </el-form-item>
-        
-        <template v-if="!productForm.hasSkus">
-          <el-form-item label="价格" prop="price">
-            <el-input-number v-model="productForm.price" :min="0" :precision="2" />
-          </el-form-item>
-          <el-form-item label="库存" prop="stock">
-            <el-input-number v-model="productForm.stock" :min="0" :precision="0" />
-          </el-form-item>
-        </template>
-
-        <template v-else>
-          <el-form-item label="库存模式">
-            <el-radio-group v-model="productForm.stockType">
-              <el-radio label="independent">独立库存 (各规格库存互不影响)</el-radio>
-              <el-radio label="shared">共享库存 (扣减总库存，适用于套装/组合)</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          
-          <el-form-item v-if="productForm.stockType === 'shared'" label="总库存" prop="stock">
-            <el-input-number v-model="productForm.stock" :min="0" :precision="0" placeholder="物理总库存" />
-            <span class="ml-2 text-xs text-slate-400">所有规格共享此库存</span>
-          </el-form-item>
-
-          <el-form-item label="规格设置">
-            <div class="w-full">
-              <div class="flex gap-8 p-4 mb-4 text-sm bg-blue-50 rounded text-slate-600">
-                <div>总库存 (自动计算): <span class="font-bold text-blue-600">{{ displayTotalStock }}</span></div>
-                <div>最低价 (自动计算): <span class="font-bold text-blue-600">¥ {{ displayMinPrice.toFixed(2) }}</span></div>
-              </div>
-
-              <div v-for="(spec, index) in productForm.specs" :key="index" class="p-4 mb-4 rounded border bg-slate-50">
-                 <div class="flex justify-between items-center mb-2">
-                   <el-input v-model="spec.name" placeholder="规格名 (e.g. 颜色)" class="w-40" />
-                   <el-button type="danger" link @click="removeSpec(index)">删除</el-button>
-                 </div>
-                 <div class="flex flex-wrap gap-2 items-center">
-                   <el-tag v-for="(val, vIndex) in spec.values" :key="vIndex" closable @close="removeSpecValue(index, vIndex)">{{ val }}</el-tag>
-                   <div class="flex gap-1">
-                     <el-input v-model="spec.tempValue" size="small" class="w-24" placeholder="输入值回车" @keyup.enter="addSpecValue(index)" />
-                     <el-button size="small" @click="addSpecValue(index)">+</el-button>
-                   </div>
-                 </div>
-              </div>
-              <el-button @click="addSpec" type="primary" plain size="small" class="mb-4">添加规格</el-button>
-              <div class="overflow-x-auto">
-                <el-table
-                  :data="productForm.skus"
-                  border
-                  :fit="true"
-                  class="min-w-[760px]"
-                  size="small"
-                  :row-key="sku => sku.skuCode || sku.sku_code || sku.code || Object.values(sku.specs || {}).join('-')"
-                  :key="`${productForm.stockType}:${(productForm.specs?.length || 0)}:${(productForm.skus?.length || 0)}`"
-                >
-                  <el-table-column
-                  v-for="(spec, idx) in productForm.specs"
-                  :key="spec.name || ('spec-' + idx)"
-                  :label="spec.name || '规格' + (idx + 1)"
-                >
-                  <template #default="{ row }">{{ spec.name ? (row.specs?.[spec.name] ?? '') : '' }}</template>
-                </el-table-column>
-                <el-table-column label="价格" width="140">
-                   <template #default="{ row }"><el-input-number v-model="row.price" :min="0" :precision="2" size="small" class="w-full" /></template>
-                </el-table-column>
-                
-                <el-table-column v-if="productForm.stockType === 'independent'" label="库存" width="140">
-                   <template #default="{ row }"><el-input-number v-model="row.stock" :min="0" :precision="0" size="small" class="w-full" /></template>
-                </el-table-column>
-                
-                <template v-else>
-                  <el-table-column label="库存消耗" width="140">
-                     <template #default="{ row }">
-                       <el-input-number v-model="row.deduct" :min="1" :precision="0" size="small" class="w-full" />
-                     </template>
-                  </el-table-column>
-                  <el-table-column label="可售库存 (估算)" width="140">
-                     <template #default="{ row }">
-                       <span class="text-slate-500">{{ Math.floor(productForm.stock / (row.deduct || 1)) }}</span>
-                     </template>
-                  </el-table-column>
-                </template>
-
-                <el-table-column label="编码" width="120">
-                   <template #default="{ row }"><el-input v-model="row.skuCode" size="small" placeholder="SKU编码" /></template>
-                </el-table-column>
-              </el-table>
-              </div>
+        <el-form-item v-if="productForm.hasSkus" label="规格设置">
+          <div class="w-full">
+            <div class="flex gap-8 p-4 mb-4 text-sm bg-blue-50 rounded text-slate-600">
+              <div>总库存 (自动计算): <span class="font-bold text-blue-600">{{ displayTotalStock }}</span></div>
+              <div>最低价 (自动计算): <span class="font-bold text-blue-600">¥ {{ displayMinPrice.toFixed(2) }}</span></div>
             </div>
-          </el-form-item>
-        </template>
-        <el-form-item label="低库存预警" prop="lowStockThreshold">
-          <el-input-number v-model="productForm.lowStockThreshold" :min="0" :precision="0" />
+
+            <div v-for="(spec, index) in productForm.specs" :key="index" class="p-4 mb-4 rounded border bg-slate-50">
+               <div class="flex justify-between items-center mb-2">
+                 <el-input v-model="spec.name" placeholder="规格名 (e.g. 颜色)" class="w-40" />
+                 <el-button type="danger" link @click="removeSpec(index)">删除</el-button>
+               </div>
+               <div class="flex flex-wrap gap-2 items-center">
+                 <el-tag v-for="(val, vIndex) in spec.values" :key="vIndex" closable @close="removeSpecValue(index, vIndex)">{{ val }}</el-tag>
+                 <div class="flex gap-1">
+                   <el-input v-model="spec.tempValue" size="small" class="w-24" placeholder="输入值回车" @keyup.enter="addSpecValue(index)" />
+                   <el-button size="small" @click="addSpecValue(index)">+</el-button>
+                 </div>
+               </div>
+            </div>
+            <el-button @click="addSpec" type="primary" plain size="small" class="mb-4">添加规格</el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="SKU">
+          <div class="overflow-x-auto w-full">
+            <el-table
+              :data="productForm.skus"
+              border
+              :fit="true"
+              class="min-w-[760px]"
+              size="small"
+              :row-key="sku => sku.id ?? sku.__key"
+              :key="`${productForm.hasSkus}:${(productForm.specs?.length || 0)}:${(productForm.skus?.length || 0)}`"
+            >
+              <el-table-column
+                v-for="(spec, idx) in (productForm.hasSkus ? productForm.specs : [])"
+                :key="spec.name || ('spec-' + idx)"
+                :label="spec.name || '规格' + (idx + 1)"
+              >
+                <template #default="{ row }">{{ spec.name ? (row.specs?.[spec.name] ?? '') : '' }}</template>
+              </el-table-column>
+              <el-table-column label="价格" width="140">
+                <template #default="{ row }"><el-input-number v-model="row.price" :min="0" :precision="2" size="small" class="w-full" /></template>
+              </el-table-column>
+              <el-table-column label="库存" width="140">
+                <template #default="{ row }"><el-input-number v-model="row.stock" :min="0" :precision="0" size="small" class="w-full" /></template>
+              </el-table-column>
+              <el-table-column label="预警阈值" width="140">
+                <template #default="{ row }"><el-input-number v-model="row.lowStockThreshold" :min="0" :precision="0" size="small" class="w-full" /></template>
+              </el-table-column>
+              <el-table-column label="编码" width="120">
+                <template #default="{ row }"><el-input v-model="row.skuCode" size="small" placeholder="SKU编码" /></template>
+              </el-table-column>
+              <el-table-column label="属性配置" width="120">
+                <template #default="{ $index }">
+                  <el-button size="small" @click="openSkuAttrDialog($index)">配置</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </el-form-item>
         <el-form-item label="商品详情">
           <el-input v-model="productForm.detail" type="textarea" placeholder="请输入商品详情" />
@@ -818,6 +983,45 @@ onMounted(() => {
           <el-button @click="showEditDialog = false">取消</el-button>
         </el-form-item>
       </el-form>
+    </el-dialog>
+
+    <el-dialog v-model="showSkuAttrDialog" title="SKU属性配置" width="760px">
+      <div class="space-y-3">
+        <div class="flex justify-between items-center">
+          <div class="text-sm text-slate-600">为当前SKU设置可选属性（例如：温度、是否加柠檬）</div>
+          <el-button type="primary" plain size="small" @click="addAttrItem">新增属性</el-button>
+        </div>
+        <div v-if="!skuAttrDraft || skuAttrDraft.length === 0" class="py-6 text-center rounded border text-slate-400">
+          暂无属性
+        </div>
+        <div v-for="(item, i) in skuAttrDraft" :key="i" class="p-3 rounded border bg-slate-50">
+          <div class="flex gap-2 items-center">
+            <el-input v-model="item.name" placeholder="属性名（如：温度）" class="w-48" />
+            <el-select v-model="item.type" class="w-28">
+              <el-option label="单选" value="single" />
+              <el-option label="多选" value="multi" />
+            </el-select>
+            <div class="flex gap-2 items-center">
+              <span class="text-sm text-slate-600">必填</span>
+              <el-switch v-model="item.required" />
+            </div>
+            <el-button type="danger" link @click="removeAttrItem(i)">删除</el-button>
+          </div>
+          <div class="mt-3">
+            <div class="flex flex-wrap gap-2 items-center">
+              <el-tag v-for="(opt, oi) in item.options" :key="`${i}_${oi}`" closable @close="removeAttrOption(i, oi)">{{ opt }}</el-tag>
+              <div class="flex gap-1">
+                <el-input v-model="item.tempOption" size="small" class="w-36" placeholder="新增选项回车" @keyup.enter="addAttrOption(i)" />
+                <el-button size="small" @click="addAttrOption(i)">+</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showSkuAttrDialog = false">取消</el-button>
+        <el-button type="primary" @click="applySkuAttrDialog">确定</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="showCategoryDialog" title="新增分类" width="380px">

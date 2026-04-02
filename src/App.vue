@@ -9,14 +9,13 @@ const userStore = useUserStore()
 
 // Watch for permission changes
 watch(
-  () => userStore.permissions,
-  (newPermissions) => {
-    // Check if the current route requires a permission
+  () => [userStore.token, userStore.permissions, route.meta.permission, route.path],
+  () => {
+    if (!userStore.token) return
+    if (route.path === '/login' || route.path === '/403') return
     const requiredPermission = route.meta.permission
-    
     if (requiredPermission && !userStore.hasPermission(requiredPermission)) {
-      // If user lost the permission for the current page, redirect to 403
-      router.push('/403')
+      router.replace('/403')
     }
   },
   { deep: true }
