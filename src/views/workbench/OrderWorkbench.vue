@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Bell, BellFilled, Refresh, Search } from '@element-plus/icons-vue'
 import request from '@/lib/request'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { nextOrderStatus } from '@/lib/order-flow'
+import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
@@ -33,9 +34,11 @@ const drawerVisible = ref(false)
 const drawerLoading = ref(false)
 const drawerOrderId = ref(null)
 const orderDetail = ref(null)
-const settleLoading = ref(false)
-const settleLoadingByKey = reactive({})
-const settleRoomLoadingByKey = reactive({})
+const statusPending = reactive({})
+const loadError = ref('')
+const lastUpdated = ref('')
+let fetching = false
+let disposed = false
 
 let pollTimer = null
 const seenPendingIds = reactive(new Set())
@@ -114,13 +117,7 @@ const statusTagType = (s) => {
 
 const canAct = (row) => [TAB_PENDING, TAB_PREPARING, TAB_DELIVERING].includes(Number(row?.status))
 
-const nextStatusOf = (row) => {
-  const v = Number(row?.status)
-  if (v === TAB_PENDING) return TAB_PREPARING
-  if (v === TAB_PREPARING) return TAB_DELIVERING
-  if (v === TAB_DELIVERING) return TAB_COMPLETED
-  return null
-}
+const nextStatusOf = row => nextOrderStatus(row?.status)
 
 const actionTextOf = (row) => {
   const v = Number(row?.status)
@@ -150,19 +147,25 @@ const applySort = (list) => {
   return list.slice().sort((a, b) => timeNum(a) - timeNum(b))
 }
 
-const fetchOrders = async () => {
-  loading.value = true
+const fetchOrders = async (silent = false) => {
+  if (fetching || disposed) return
+  fetching = true
+  if (!silent) loading.value = true
   try {
-    const res = await request.get('/orders', { params: { page: 1, pageSize: 2000 } })
+    const res = await request.get('/orders', { params: { page: 1, pageSize: 2000 }, silent })
     const list = (res.list || []).map(o => ({
       ...o,
       status: normalizeStatusCode(o.status) ?? o.status,
       payStatus: o?.payStatus ?? o?.pay_status
     }))
+    if (disposed) return
     orders.value = list
+    loadError.value = ''
+    lastUpdated.value = dayjs().format('HH:mm:ss')
   } catch (e) {
-    console.error(e)
+    loadError.value = '同步失败，保留上次数据；将在下一轮重试。'
   } finally {
+    fetching = false
     loading.value = false
   }
 }
@@ -262,7 +265,7 @@ const checkNewPending = () => {
 const startPolling = () => {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
-    await fetchOrders()
+    await fetchOrders(true)
     checkNewPending()
   }, 10000)
 }
@@ -273,16 +276,6 @@ const stopPolling = () => {
   pollTimer = null
 }
 
-watch(soundEnabled, async (val) => {
-  if (val) {
-    await fetchOrders()
-    checkNewPending()
-    startPolling()
-  } else {
-    stopPolling()
-  }
-})
-
 const openDrawer = async (row) => {
   const key = orderKeyOf(row)
   if (!key) return
@@ -292,13 +285,14 @@ const openDrawer = async (row) => {
   orderDetail.value = null
   try {
     const res = await request.get(`/orders/${key}`)
-    orderDetail.value = res
+    if (drawerVisible.value && drawerOrderId.value === key) orderDetail.value = res
   } catch (e) {
+    if (drawerOrderId.value !== key) return
     console.error(e)
     ElMessage.error('获取订单详情失败')
     drawerVisible.value = false
   } finally {
-    drawerLoading.value = false
+    if (drawerOrderId.value === key) drawerLoading.value = false
   }
 }
 
@@ -320,138 +314,25 @@ const orderKeyOf = (rowOrDetail) => {
   return v === undefined || v === null ? '' : String(v)
 }
 
-const orderNumericIdOf = (rowOrDetail) => {
-  const v = rowOrDetail?.orderId ?? rowOrDetail?.id
-  const n = Number(v)
-  return Number.isFinite(n) ? n : null
-}
-
-const payStatusValueOf = (rowOrDetail) => {
-  const direct = rowOrDetail?.payStatus ?? rowOrDetail?.pay_status
-  if (direct !== undefined && direct !== null && direct !== '') return Number(direct)
-  return null
-}
-
-const isUnsettled = (rowOrDetail) => payStatusValueOf(rowOrDetail) === 0
-
-const settleLoadingOfCard = (row) => {
-  const key = orderKeyOf(row)
-  if (!key) return false
-  return Boolean(settleLoadingByKey[key])
-}
-
-const currentOrderId = () => {
-  const d = orderDetail.value || {}
-  return orderNumericIdOf(d)
-}
-
-const settleOrder = async (orderId) => {
-  const id = Number.isFinite(Number(orderId)) ? Number(orderId) : currentOrderId()
-  if (!id) {
-    ElMessage.error('订单ID无效，无法结算')
-    return
-  }
-  let payMethod = null
-  try {
-    await ElMessageBox.confirm('请选择挂账结算方式', '挂账结算', {
-      confirmButtonText: '扫码支付',
-      cancelButtonText: '现金',
-      distinguishCancelAndClose: true,
-      type: 'warning'
-    })
-    payMethod = 1
-  } catch (e) {
-    if (e === 'cancel') payMethod = 2
-    else return
-  }
-  settleLoading.value = true
-  try {
-    await request.post(`/cashier/orders/${id}/settle`, { payMethod })
-    ElMessage.success('结算成功')
-    await fetchOrders()
-    if (drawerVisible.value && currentOrderId() === id) await refreshDrawer()
-  } catch (e) {
-    console.error(e)
-  } finally {
-    settleLoading.value = false
-  }
-}
-
-const settleOrderFromCard = async (row) => {
-  const key = orderKeyOf(row)
-  if (!key) {
-    ElMessage.error('订单ID无效，无法结算')
-    return
-  }
-  settleLoadingByKey[key] = true
-  try {
-    let numericId = orderNumericIdOf(row)
-    if (!numericId) {
-      const res = await request.get(`/orders/${key}`)
-      numericId = orderNumericIdOf(res)
-    }
-    if (!numericId) {
-      ElMessage.error('订单不可结算或不存在')
-      return
-    }
-    await settleOrder(numericId)
-  } finally {
-    settleLoadingByKey[key] = false
-  }
-}
-
-const settleRoomFromCard = async (row) => {
-  const rk = roomKeyOf(row)
-  if (!rk) {
-    ElMessage.error('房间号无效，无法结算')
-    return
-  }
-  settleRoomLoadingByKey[rk] = true
-  let payMethod = null
-  try {
-    await ElMessageBox.confirm('请选择挂账结算方式', '本房间挂账结算', {
-      confirmButtonText: '扫码支付',
-      cancelButtonText: '现金',
-      distinguishCancelAndClose: true,
-      type: 'warning'
-    })
-    payMethod = 1
-  } catch (e) {
-    if (e === 'cancel') payMethod = 2
-    else {
-      settleRoomLoadingByKey[rk] = false
-      return
-    }
-  }
-
-  try {
-    const unsettled = (orders.value || []).filter(o => roomKeyOf(o) === rk && isUnsettled(o))
-    const ids = unsettled.map(o => orderNumericIdOf(o)).filter(Boolean)
-    const body = ids.length === unsettled.length && ids.length > 0 ? { payMethod, orderIds: ids } : { payMethod }
-    // await request.post(`/cashier/rooms/${encodeURIComponent(rk)}/settle`, body)
-    ElMessage.success('结算成功')
-    await fetchOrders()
-    if (drawerVisible.value) await refreshDrawer()
-  } catch (e) {
-    console.error(e)
-  } finally {
-    settleRoomLoadingByKey[rk] = false
-  }
-}
+const isUnsettled = row => Number(row?.payStatus ?? row?.pay_status) === 0
 
 const updateStatus = async (rowOrDetail) => {
   const current = Number(rowOrDetail?.status)
   const next = nextStatusOf({ status: current })
   if (!next) return
   const id = rowOrDetail?.id ?? rowOrDetail?.orderId ?? rowOrDetail?.orderNo ?? rowOrDetail?.orderNumber
-  if (!id) return
+  if (!id || statusPending[id]) return
+  statusPending[id] = true
   try {
     await request.patch(`/orders/${id}/status`, { status: next })
+    rowOrDetail.status = next
     ElMessage.success('操作成功')
     await fetchOrders()
     if (drawerVisible.value) await refreshDrawer()
   } catch (e) {
     console.error(e)
+  } finally {
+    statusPending[id] = false
   }
 }
 
@@ -481,15 +362,19 @@ const selectedAttrsText = (item) => {
 onMounted(async () => {
   await Promise.all([fetchOrders(), refreshRooms()])
   checkNewPending()
+  startPolling()
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   stopPolling()
 })
 </script>
 
 <template>
   <div class="space-y-4">
+    <div class="flex justify-between items-center"><div><h2 class="text-2xl font-semibold text-slate-800">订单工作台</h2><p class="mt-1 text-sm text-slate-500">接单 → 备货 → 配送 → 完成 · 每 10 秒自动同步，声音可独立开启</p></div><span class="text-xs text-slate-500">{{ lastUpdated ? `最近同步 ${lastUpdated}` : '正在连接门店' }}</span></div>
+    <el-alert v-if="loadError" :title="loadError" type="warning" :closable="false" show-icon />
     <div class="flex flex-col gap-3 xl:flex-row xl:justify-between xl:items-center">
       <div class="flex flex-wrap gap-2 items-center">
         <el-radio-group v-model="activeTab">
@@ -500,7 +385,7 @@ onBeforeUnmount(() => {
         </el-radio-group>
       </div>
       <div class="flex flex-wrap gap-2 items-center">
-        <el-button :icon="Refresh" @click="fetchOrders">刷新</el-button>
+        <el-button :icon="Refresh" @click="fetchOrders(false)">刷新</el-button>
         <el-button :icon="soundEnabled ? BellFilled : Bell" :type="soundEnabled ? 'primary' : 'default'" @click="soundEnabled = !soundEnabled">
           声音提醒
         </el-button>
@@ -532,8 +417,8 @@ onBeforeUnmount(() => {
 
     <div v-loading="loading">
       <div v-if="filteredOrders.length === 0" class="p-10 text-center bg-white rounded border text-slate-400">暂无任务</div>
-      <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <el-card v-for="o in filteredOrders" :key="o.id" shadow="hover" class="h-60 border">
+      <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        <el-card v-for="o in filteredOrders" :key="o.id" shadow="hover" class="min-h-60 border">
           <div class="flex flex-col h-full">
             <div class="flex gap-3 justify-between items-start">
               <div class="min-w-0">
@@ -567,26 +452,9 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="flex gap-2 justify-end pt-4 mt-auto">
-              <el-button
-                v-if="roomUnsettledCounts[roomKeyOf(o)] > 1 && isUnsettled(o)"
-                :loading="settleRoomLoadingByKey[roomKeyOf(o)]"
-                type="warning"
-                size="small"
-                @click="settleRoomFromCard(o)"
-              >
-                本房间结算
-              </el-button>
-              <el-button 
-                v-if="isUnsettled(o)"
-                :loading="settleLoadingOfCard(o)"
-                type="warning"
-                size="small"
-                @click="settleOrderFromCard(o)"
-              >
-                挂账结算
-              </el-button>
+              <el-button v-if="isUnsettled(o)" disabled size="small" title="未接入真实支付通道，暂不支持挂账结算">结算未开放</el-button>
               <el-button size="small" @click="openDrawer(o)">详情</el-button>
-              <el-button v-if="canAct(o)" type="primary" size="small" @click="updateStatus(o)">{{ actionTextOf(o) }}</el-button>
+              <el-button v-if="canAct(o)" :loading="statusPending[orderKeyOf(o)]" type="primary" size="small" @click="updateStatus(o)">{{ actionTextOf(o) }}</el-button>
             </div>
           </div>
         </el-card>
@@ -639,16 +507,8 @@ onBeforeUnmount(() => {
         <div class="flex justify-between items-center w-full">
           <el-button @click="refreshDrawer">刷新详情</el-button>
           <div class="flex gap-2">
-            <el-button
-              v-if="Number(orderDetail?.payStatus) === 0"
-              :loading="settleLoading"
-              type="warning"
-              @click="settleOrder"
-            >
-              挂账结算
-            </el-button>
             <el-button @click="drawerVisible = false">关闭</el-button>
-            <el-button v-if="orderDetail && canAct(orderDetail)" type="primary" @click="updateStatus(orderDetail)">{{ actionTextOf(orderDetail) }}</el-button>
+            <el-button v-if="orderDetail && canAct(orderDetail)" :loading="statusPending[orderKeyOf(orderDetail)]" type="primary" @click="updateStatus(orderDetail)">{{ actionTextOf(orderDetail) }}</el-button>
           </div>
         </div>
       </template>

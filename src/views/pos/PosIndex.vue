@@ -5,6 +5,7 @@ import request from '@/lib/request'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+import { createSubmissionTracker } from '@/lib/order-flow'
 
 const userStore = useUserStore()
 
@@ -20,8 +21,15 @@ const activeCategoryId = ref('')
 const products = ref([])
 const productsLoading = ref(false)
 const productKeyword = ref('')
+const productLoadError = ref('')
+let productRequestId = 0
 
 const cartItems = ref([])
+const submitting = ref(false)
+const submitError = ref('')
+const submittedOrder = ref(null)
+const submissionTracker = createSubmissionTracker(() => clientOrderNo())
+
 
 const skuDialogVisible = ref(false)
 const skuDialogProduct = ref(null)
@@ -119,7 +127,9 @@ const loadCategories = async () => {
 }
 
 const loadProducts = async () => {
+  const requestId = ++productRequestId
   productsLoading.value = true
+  productLoadError.value = ''
   try {
     const res = await request.get('/products', {
       params: {
@@ -129,11 +139,11 @@ const loadProducts = async () => {
         keyword: productKeyword.value || undefined
       }
     })
-    products.value = res.list || []
+    if (requestId === productRequestId) products.value = res.list || []
   } catch (e) {
-    console.error(e)
+    if (requestId === productRequestId) productLoadError.value = '商品加载失败，请检查后台服务并重试。'
   } finally {
-    productsLoading.value = false
+    if (requestId === productRequestId) productsLoading.value = false
   }
 }
 
@@ -281,7 +291,7 @@ watch(selectedRoom, (val, oldVal) => {
 
 const roomStatusText = (room) => {
   const key = String(room?.roomNumber ?? room?.id ?? '')
-  return roomLocalStatus[key] || '空闲'
+  return roomLocalStatus[key] || '可选桌台'
 }
 
 const roomStatusClass = (room) => {
@@ -297,6 +307,7 @@ const clientOrderNo = () => {
 }
 
 const createCashierOrder = async (payMethod) => {
+  if (submitting.value || payMethod !== 2) return
   if (!selectedRoom.value) {
     ElMessage.error('请先选择房间/桌号')
     return
@@ -321,17 +332,21 @@ const createCashierOrder = async (payMethod) => {
   const body = {
     storeId: Number(currentStoreId.value),
     roomId: roomNo,
-    userId: Number(currentUserId.value),
     payMethod,
-    clientOrderNo: clientOrderNo(),
+
     items: cartItems.value.map(it => ({
       skuId: Number(it.skuId),
       qty: Number(it.qty),
       selectedAttrs: it.selectedAttrs || {}
     }))
   }
+  const submission = submissionTracker.prepare(body)
+  submitting.value = true
+  submitError.value = ''
   try {
-    const res = await request.post('/cashier/orders', body)
+    const res = await request.post('/cashier/orders', submission)
+    submittedOrder.value = res
+    submissionTracker.clear()
     ElMessage.success(`开单成功：${res.orderNo || res.orderId}`)
     const roomKey = roomNo
     if (payMethod === 2) {
@@ -347,7 +362,9 @@ const createCashierOrder = async (payMethod) => {
       payDialogVisible.value = true
     }
   } catch (e) {
-    console.error(e)
+    submitError.value = '提交未确认。请保持购物车不变后重试，系统会使用同一单号避免重复开单。'
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -359,9 +376,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="h-[calc(100vh-112px)]">
+  <div class="h-[calc(100vh-112px)]" v-loading="submitting" element-loading-text="正在确认订单，请勿重复提交">
     <div class="mb-4">
       <h2 class="text-2xl font-bold text-slate-800">收银台</h2>
+      <p class="mt-1 text-sm text-slate-500">现金开单由服务端核价并直接记录收款完成；需配送的点单请使用顾客端。演示环境不会发生真实扣款。</p>
+      <el-alert v-if="submitError" :title="submitError" type="error" :closable="false" class="mt-3" />
+      <el-alert v-if="submittedOrder" :title="`已记录现金订单 ${submittedOrder.orderNo || submittedOrder.orderId}，已收款并完成。`" type="success" class="mt-3" />
     </div>
     <div class="grid grid-cols-12 gap-4 h-full">
       <el-card class="col-span-12 lg:col-span-3 h-full" shadow="never">
@@ -405,6 +425,8 @@ onMounted(async () => {
           </div>
         </template>
 
+        <el-alert v-if="productLoadError" :title="productLoadError" type="error" :closable="false" class="mb-3"><el-button size="small" @click="loadProducts">重试加载</el-button></el-alert>
+        <el-empty v-if="!productsLoading && !productLoadError && !products.length" description="当前分类暂无商品" />
         <div v-loading="productsLoading" class="grid grid-cols-2 xl:grid-cols-3 gap-3 overflow-y-auto max-h-[calc(100vh-220px)]">
           <div
             v-for="p in products"
@@ -460,9 +482,9 @@ onMounted(async () => {
             <span class="text-red-600">¥ {{ cartTotalAmount.toFixed(2) }}</span>
           </div>
           <div class="mt-3 grid grid-cols-3 gap-2">
-            <el-button type="warning" @click="createCashierOrder(3)">挂账</el-button>
-            <el-button type="primary" @click="createCashierOrder(1)">扫码支付</el-button>
-            <el-button type="success" @click="createCashierOrder(2)">现金</el-button>
+            <el-button disabled title="挂账结算尚未接入">挂账</el-button>
+            <el-button disabled title="真实支付渠道尚未接入">扫码支付</el-button>
+            <el-button type="primary" :loading="submitting" :disabled="!cartItems.length" @click="createCashierOrder(2)">现金开单</el-button>
           </div>
         </div>
       </el-card>

@@ -15,6 +15,7 @@ import {
   ArrowDown
 } from '@element-plus/icons-vue'
 
+const demoMode = import.meta.env.VITE_DEMO_MODE !== 'false'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
@@ -107,6 +108,7 @@ const handleLogout = () => {
       </el-header>
       
       <el-main class="overflow-y-auto relative p-6 bg-slate-50">
+        <el-alert v-if="demoMode" title="本地演示 · 仅使用测试数据；线上支付和退款未开放。" type="info" :closable="false" class="mb-5" show-icon />
         <router-view v-slot="{ Component }">
           <transition name="fade">
             <Suspense>

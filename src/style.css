@@ -15,3 +15,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+
+/* Quiet, consistent operational surfaces; keep Element Plus iconography. */
+:root { --el-color-primary: #2563eb; --el-border-radius-base: 8px; }
+.el-card { border-radius: 12px; border-color: #e2e8f0; }
+.el-table { --el-table-header-bg-color: #f8fafc; }
+.el-menu-item.is-active { background: #1e293b; border-right: 3px solid #60a5fa; }
+.el-main { scrollbar-gutter: stable; }

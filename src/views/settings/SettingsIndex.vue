@@ -375,7 +375,7 @@ watch(activeTab, (val) => {
   <el-card>
     <el-tabs v-model="activeTab">
       <el-tab-pane label="门店资料" name="store">
-        <el-form label-width="120px" class="mt-4 max-w-lg">
+        <el-alert title="门店资料保存接口尚未接入，以下仅为示例展示。" type="info" :closable="false" /><el-form disabled label-width="120px" class="mt-4 max-w-lg">
           <el-form-item label="门店名称">
             <el-input model-value="欢乐KTV旗舰店" />
           </el-form-item>
@@ -459,8 +459,8 @@ watch(activeTab, (val) => {
       </el-tab-pane>
       
       <el-tab-pane label="支付配置" name="payment">
-        <el-alert title="请配置微信商户号以启用支付功能" type="warning" show-icon class="mb-4" />
-        <el-form label-width="120px" class="max-w-lg">
+        <el-alert title="线上支付未接入。请由部署人员通过服务端安全配置接入，勿在演示页面输入密钥。" type="warning" show-icon class="mb-4" />
+        <el-form disabled label-width="120px" class="max-w-lg">
           <el-form-item label="商户号 (MCHID)">
             <el-input placeholder="请输入微信支付商户号" />
           </el-form-item>

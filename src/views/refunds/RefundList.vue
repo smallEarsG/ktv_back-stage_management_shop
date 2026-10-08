@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
 import request from '@/lib/request'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const dateRange = ref([])
 const refunds = ref([])
@@ -32,40 +31,6 @@ const handleDateRangeChange = (range) => {
   fetchRefunds()
 }
 
-const handleAudit = async (row, action) => {
-  if (action === 'reject') {
-    ElMessageBox.prompt('请输入拒绝原因', '拒绝退款', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPattern: /\S/,
-      inputErrorMessage: '拒绝原因不能为空'
-    }).then(async ({ value }) => {
-      await submitAudit(row.id, action, value)
-    }).catch(() => {})
-  } else {
-    ElMessageBox.confirm(
-      '确定同意该退款申请吗?',
-      '提示',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
-    ).then(async () => {
-      await submitAudit(row.id, action)
-    }).catch(() => {})
-  }
-}
-
-const submitAudit = async (id, action, rejectReason = '') => {
-  try {
-    await request.post(`/refunds/${id}/audit`, {
-      action,
-      rejectReason
-    })
-    ElMessage.success('操作成功')
-    fetchRefunds()
-  } catch (e) {
-    console.error(e)
-  }
-}
-
 onMounted(() => {
   fetchRefunds()
 })
@@ -73,6 +38,7 @@ onMounted(() => {
 
 <template>
   <div>
+    <el-alert title="退款执行尚未接入真实支付渠道。此页仅查询记录，不支持审批或资金退回。" type="info" :closable="false" show-icon class="mb-4" />
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
       <h2 class="text-2xl font-bold text-slate-800">退款售后</h2>
       <TimeRangePicker v-model="dateRange" @change="handleDateRangeChange" />
@@ -101,10 +67,10 @@ onMounted(() => {
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <div v-if="row.status === 'pending'">
-            <el-button type="success" size="small" @click="handleAudit(row, 'approve')">同意</el-button>
-            <el-button type="danger" size="small" @click="handleAudit(row, 'reject')">拒绝</el-button>
+            <el-button type="success" size="small" disabled>同意</el-button>
+            <el-button type="danger" size="small" disabled>拒绝</el-button>
           </div>
-          <el-button v-else link type="primary" size="small">查看详情</el-button>
+          <span v-else class="text-slate-400">只读记录</span>
         </template>
       </el-table-column>
     </el-table>

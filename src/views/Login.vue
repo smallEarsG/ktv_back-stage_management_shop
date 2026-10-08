@@ -16,7 +16,7 @@ const form = reactive({
 
 const firstAllowedPath = () => {
   const nav = [
-    { path: '/dashboard', permission: 'dashboard:view' },
+    { path: '/workbench', permission: 'workbench:view' },
     { path: '/pos/index', permission: 'pos:view' },
     { path: '/workbench', permission: 'workbench:view' },
     { path: '/orders', permission: 'order:view' },
@@ -31,8 +31,9 @@ const firstAllowedPath = () => {
 }
 
 const handleLogin = async () => {
+  if (loading.value) return
   if (!form.phone || !form.password) {
-    ElMessage.warning('请输入手机号和密码')
+    ElMessage.warning('请输入账号和密码')
     return
   }
   
@@ -71,7 +72,7 @@ const handleLogin = async () => {
         <el-form-item>
           <el-input 
             v-model="form.phone" 
-            placeholder="手机号" 
+            placeholder="账号 / 手机号"
             :prefix-icon="Iphone"
             size="large"
           />
@@ -100,7 +101,7 @@ const handleLogin = async () => {
         </el-button>
         
         <div class="mt-4 text-center text-sm text-slate-400">
-          测试账号: 13800138000 / password123
+          本地演示账号：merchant-local / LocalDemo123!
         </div>
       </el-form>
     </div>

@@ -15,21 +15,6 @@ export const useUserStore = defineStore('user', () => {
     storedUserInfo = null
   }
 
-  // MOCK: Ensure permissions exist on restore (for development/demo)
-  if (storedUserInfo && !storedUserInfo.permissions) {
-    storedUserInfo.permissions = [
-      'dashboard:view',
-        'pos:view',
-        'workbench:view',
-      'order:view',
-      'product:view',
-      'refund:view',
-      'finance:view',
-      'warehouse:view',
-      'settings:view'
-    ]
-  }
-
   const userInfo = ref(storedUserInfo)
   const permissions = ref(userInfo.value?.permissions || []) 
   const router = useRouter()
@@ -45,34 +30,13 @@ export const useUserStore = defineStore('user', () => {
       const user = res?.userInfo || res?.user || res?.data?.userInfo || res?.data?.user || {}
       const defaultStoreId = res?.defaultStoreId ?? res?.storeId ?? user?.storeId ?? res?.data?.defaultStoreId ?? res?.data?.storeId
       
-      // MOCK: Ensure user has permissions. 
-      // If the backend doesn't return permissions yet, we'll assign a default set for demonstration.
-      if (!user.permissions) {
-        user.permissions = [
-          'dashboard:view',
-          'pos:view',
-          'workbench:view',
-          'order:view',
-          'product:view',
-          'refund:view',
-          'finance:view',
-          'warehouse:view',
-          'settings:view'
-        ]
-      }
-      
-      // MOCK: Ensure user has role
-      if (!user.role) {
-        user.role = 'admin'
-      }
-
       if (!accessToken) {
         throw new Error('登录响应缺少 token')
       }
 
       token.value = accessToken
       userInfo.value = user
-      permissions.value = user.permissions
+      permissions.value = user.permissions || []
       
       // Set current store ID
       if (defaultStoreId !== undefined && defaultStoreId !== null) {

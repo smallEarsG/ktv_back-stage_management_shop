@@ -1,10 +1,10 @@
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, computed, reactive } from 'vue'
 import { useRoute } from 'vue-router'
 import { Search, Filter } from '@element-plus/icons-vue'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
 import request from '@/lib/request'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
@@ -20,8 +20,7 @@ const pageSize = ref(10)
 const showDetailDialog = ref(false)
 const detailLoading = ref(false)
 const orderDetail = ref(null)
-const settleLoading = ref(false)
-const rowSettleLoadingId = ref(null)
+const statusPending = reactive({})
 const payStatusFilter = ref('all')
 const route = useRoute()
 
@@ -254,12 +253,17 @@ const handleDateRangeChange = (range) => {
 }
 
 const handleStatusChange = async (row, nextStatus) => {
+  if (statusPending[row.id]) return
+  statusPending[row.id] = true
   try {
     await request.patch(`/orders/${row.id}/status`, { status: nextStatus })
+    row.status = nextStatus
     ElMessage.success('状态更新成功')
-    fetchOrders()
+    await fetchOrders()
   } catch (e) {
     console.error(e)
+  } finally {
+    statusPending[row.id] = false
   }
 }
 
@@ -330,55 +334,6 @@ const refreshOrderDetail = async () => {
     console.error(e)
   } finally {
     detailLoading.value = false
-  }
-}
-
-const settleOrderById = async (id) => {
-  if (!id) {
-    ElMessage.error('订单ID无效，无法结算')
-    return
-  }
-  let payMethod = null
-  try {
-    await ElMessageBox.confirm('请选择挂账结算方式', '挂账结算', {
-      confirmButtonText: '扫码支付',
-      cancelButtonText: '现金',
-      distinguishCancelAndClose: true,
-      type: 'warning'
-    })
-    payMethod = 1
-  } catch (e) {
-    if (e === 'cancel') payMethod = 2
-    else return
-  }
-  settleLoading.value = true
-  try {
-    await request.post(`/cashier/orders/${id}/settle`, { payMethod })
-    ElMessage.success('结算成功')
-    await Promise.all([fetchOrders(), refreshOrderDetail()])
-  } catch (e) {
-    console.error(e)
-  } finally {
-    settleLoading.value = false
-  }
-}
-
-const settleOrder = async () => {
-  const id = currentOrderId()
-  await settleOrderById(id)
-}
-
-const settleOrderFromRow = async (row) => {
-  const id = Number(row?.id ?? row?.orderId)
-  if (!Number.isFinite(id)) {
-    ElMessage.error('订单ID无效，无法结算')
-    return
-  }
-  rowSettleLoadingId.value = id
-  try {
-    await settleOrderById(id)
-  } finally {
-    rowSettleLoadingId.value = null
   }
 }
 
@@ -477,8 +432,7 @@ watch(
             v-if="isCreditUnsettled(row)"
             type="warning"
             size="small"
-            :loading="rowSettleLoadingId === Number(row?.id ?? row?.orderId)"
-            @click="settleOrderFromRow(row)"
+            disabled title="真实支付结算尚未接入"
           >
             挂账结算
           </el-button>
@@ -486,24 +440,24 @@ watch(
             <el-button type="danger" size="small" disabled>取消订单</el-button>
           </template>
           <template v-else-if="Number(row.status) === 20">
-            <el-button type="primary" size="small" @click="handleStatusChange(row, 30)">接单</el-button>
+            <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 30)">接单</el-button>
             <el-button type="danger" size="small" disabled>取消</el-button>
           </template>
           <template v-else-if="Number(row.status) === 30">
-            <el-button type="primary" size="small" @click="handleStatusChange(row, 40)">开始配送</el-button>
+            <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 40)">开始配送</el-button>
           </template>
           <template v-else-if="Number(row.status) === 40">
-            <el-button type="success" size="small" @click="handleStatusChange(row, 50)">完成</el-button>
+            <el-button type="success" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 50)">完成</el-button>
           </template>
           <template v-else-if="Number(row.status) === 50">
             <el-button link type="primary" size="small" @click="openOrderDetail(row)">详情</el-button>
           </template>
           <template v-else-if="Number(row.status) === 91">
             <el-tooltip content="该操作后端暂未开放接口" placement="top">
-              <el-button type="primary" size="small" @click="notSupported">同意退款</el-button>
+              <el-button type="primary" size="small" disabled>同意退款</el-button>
             </el-tooltip>
             <el-tooltip content="该操作后端暂未开放接口" placement="top">
-              <el-button type="danger" size="small" @click="notSupported">拒绝退款</el-button>
+              <el-button type="danger" size="small" disabled>拒绝退款</el-button>
             </el-tooltip>
           </template>
           <template v-else>
@@ -583,9 +537,9 @@ watch(
           <div class="flex gap-2">
             <el-button
               v-if="Number(orderDetail?.payStatus) === 0"
-              :loading="settleLoading"
+              disabled title="真实支付结算尚未接入"
               type="warning"
-              @click="settleOrder"
+
             >
               挂账结算
             </el-button>
