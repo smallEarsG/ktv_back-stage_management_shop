@@ -1,0 +1,143 @@
+{
+  "release": "refund-link-20261009-1820",
+  "verifiedAtUtc": "2026-10-09T10:29:27.593296+00:00",
+  "codeCommit": "256d3754e709e2f5d7dccec7d910a8cc1c46a166",
+  "packageSha256": "8196eccea82a9a5473575c5c5684ffbb10486b508c5b716f3329502a363d8275",
+  "changes": [
+    "Refund related order numbers are clickable and open the existing order detail dialog using the actual order ID.",
+    "Order details are fetched directly regardless of the current list page or date range.",
+    "Order detail offers a return to the refund list.",
+    "Missing related order IDs and missing order permissions have clear feedback.",
+    "Slow responses for a previous order cannot replace the latest order detail."
+  ],
+  "validation": {
+    "lint": "passed",
+    "merchantTests": 46,
+    "regressionTestsAdded": 6,
+    "demo": {
+      "release": "refund-link-20261009-1820",
+      "kind": "demo",
+      "passed": 44,
+      "failed": 0,
+      "checks": [
+        "demo access gate accepts login",
+        "public file SHA matches demo/assets/403-Bfz2XPXm.js",
+        "public file SHA matches demo/assets/browser-JP79f-a9.js",
+        "public file SHA matches demo/assets/CashierPaymentDialog-Ch5vZTKa.js",
+        "public file SHA matches demo/assets/Dashboard-bifnvvGj.css",
+        "public file SHA matches demo/assets/dashboard-chart-maiXvdir.js",
+        "public file SHA matches demo/assets/Dashboard-DMo014bw.js",
+        "public file SHA matches demo/assets/date-range-Cui8n-l4.js",
+        "public file SHA matches demo/assets/date-range-tn0RQdqM.css",
+        "public file SHA matches demo/assets/finance-C37UZmAv.css",
+        "public file SHA matches demo/assets/finance-CKd5eEKo.js",
+        "public file SHA matches demo/assets/FinanceList-t-J-6c0V.js",
+        "public file SHA matches demo/assets/FinanceOverview-CkOR0H6f.css",
+        "public file SHA matches demo/assets/FinanceOverview-pkjcRGVg.js",
+        "public file SHA matches demo/assets/index-Bhn0w6AL.js",
+        "public file SHA matches demo/assets/index-ejd8yYxv.css",
+        "public file SHA matches demo/assets/inventory-DVxbbunU.js",
+        "public file SHA matches demo/assets/OrderList-CMgnfVEx.js",
+        "public file SHA matches demo/assets/OrderWorkbench-DI8g77A0.js",
+        "public file SHA matches demo/assets/PosIndex-B6dq3iPc.js",
+        "public file SHA matches demo/assets/ProductList-BfuwDqhf.js",
+        "public file SHA matches demo/assets/RefundList-BLFAm7oQ.js",
+        "public file SHA matches demo/assets/RefundList-DhLzdmB9.css",
+        "public file SHA matches demo/assets/RoomBalanceDialog-CDWNHYy3.js",
+        "public file SHA matches demo/assets/SettingsIndex-BpBPaYtt.js",
+        "public file SHA matches demo/assets/WarehouseList-CzQjhIKZ.js",
+        "public file SHA matches demo/favicon.svg",
+        "public file SHA matches demo/index.html",
+        "deployed order bundle includes payment failure and complete filter labels",
+        "order detail includes return to refund list",
+        "refund page includes clickable related order navigation",
+        "order route serves the new application entry",
+        "related order details match refund 6",
+        "related order details match refund 5",
+        "related order details match refund 4",
+        "related order details match refund 3",
+        "related order details match refund 2",
+        "related order details match refund 1",
+        "cancelled filter returns matching orders and correct total",
+        "cancelled orders retain server failure/closed payment code for frontend display",
+        "partial refund filter returns matching orders and correct total",
+        "full refund filter returns matching orders and correct total",
+        "paying filter returns only payment status 1",
+        "filtered pagination respects page and consistent total"
+      ],
+      "businessWrites": 0
+    },
+    "production": {
+      "release": "refund-link-20261009-1820",
+      "kind": "production",
+      "passed": 32,
+      "failed": 0,
+      "checks": [
+        "public file SHA matches production/assets/403-B_od7nlr.js",
+        "public file SHA matches production/assets/browser-JP79f-a9.js",
+        "public file SHA matches production/assets/CashierPaymentDialog-DxNv9bx8.js",
+        "public file SHA matches production/assets/Dashboard-bifnvvGj.css",
+        "public file SHA matches production/assets/dashboard-chart-maiXvdir.js",
+        "public file SHA matches production/assets/Dashboard-DkCy8ror.js",
+        "public file SHA matches production/assets/date-range-BpyjXshL.js",
+        "public file SHA matches production/assets/date-range-tn0RQdqM.css",
+        "public file SHA matches production/assets/finance-C37UZmAv.css",
+        "public file SHA matches production/assets/finance-C8hzaY35.js",
+        "public file SHA matches production/assets/FinanceList-CXEruxvp.js",
+        "public file SHA matches production/assets/FinanceOverview-CkOR0H6f.css",
+        "public file SHA matches production/assets/FinanceOverview-DTeM5e9h.js",
+        "public file SHA matches production/assets/index-C-LrG_ri.js",
+        "public file SHA matches production/assets/index-ejd8yYxv.css",
+        "public file SHA matches production/assets/inventory-DVxbbunU.js",
+        "public file SHA matches production/assets/OrderList-DcdAjXAN.js",
+        "public file SHA matches production/assets/OrderWorkbench-DFXeOW-b.js",
+        "public file SHA matches production/assets/PosIndex-FaBom4zN.js",
+        "public file SHA matches production/assets/ProductList-CmkwckrD.js",
+        "public file SHA matches production/assets/RefundList-B6go9COS.js",
+        "public file SHA matches production/assets/RefundList-DhLzdmB9.css",
+        "public file SHA matches production/assets/RoomBalanceDialog-CMTV6ook.js",
+        "public file SHA matches production/assets/SettingsIndex-D6s-jREz.js",
+        "public file SHA matches production/assets/WarehouseList-CmqwtSZ1.js",
+        "public file SHA matches production/favicon.svg",
+        "public file SHA matches production/index.html",
+        "deployed order bundle includes payment failure and complete filter labels",
+        "order detail includes return to refund list",
+        "refund page includes clickable related order navigation",
+        "order route serves the new application entry",
+        "production backend public API remains healthy"
+      ],
+      "businessWrites": 0
+    },
+    "server": {
+      "environments": {
+        "demo": {
+          "filesVerified": 27,
+          "serviceActive": true
+        },
+        "production": {
+          "filesVerified": 27,
+          "serviceActive": true
+        }
+      },
+      "protectedProgramsAndConfigurationsUnchanged": true,
+      "databasesChanged": false,
+      "backup": "/home/project/order/releases/refund-link-20261009-1820/backup"
+    },
+    "browser": {
+      "clickedOrder": "ORDffc207f014234966b3038adfd2921638",
+      "detailVerified": true,
+      "amountTotal": 12,
+      "amountRefunded": 12,
+      "item": "冰爽可乐",
+      "itemQuantity": 1,
+      "returnToRefundListVerified": true,
+      "screenshot": "related-order-detail.png"
+    }
+  },
+  "scope": {
+    "backendChanged": false,
+    "databaseChanged": false,
+    "businessWrites": 0,
+    "otherWorkspaceEdits": "Preserved and excluded; builds were produced from the exact code commit archive."
+  }
+}
