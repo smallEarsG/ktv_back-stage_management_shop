@@ -1,14 +1,28 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Bell, BellFilled, Refresh, Search } from '@element-plus/icons-vue'
 import request from '@/lib/request'
 import { nextOrderStatus } from '@/lib/order-flow'
-import { ElMessage } from 'element-plus'
+import { createPendingMonitor, roomBalancesById } from '@/lib/cashier-workspace'
+import RoomBalanceDialog from '@/components/RoomBalanceDialog.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useUserStore } from '@/stores/user'
 import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
 dayjs.extend(customParseFormat)
 
+const userStore = useUserStore()
+const settleCash = async row => {
+  const id = row.orderId || row.id
+  if (statusPending[id]) return
+  await ElMessageBox.confirm(`请确认已收到 ${roomKeyOf(row)} 此订单的全部现金，再登记结算。`, '现金结算', { type: 'warning' })
+  if (statusPending[id] || disposed) return
+  statusPending[id] = true
+  try { await request.post(`/cashier/orders/${id}/settle`, { payMethod: 2 }); ElMessage.success('现金结算已登记'); await refreshAll(); if (drawerVisible.value) await refreshDrawer() }
+  finally { statusPending[id] = false }
+}
 const TAB_PENDING = 20
 const TAB_PREPARING = 30
 const TAB_DELIVERING = 40
@@ -21,14 +35,28 @@ const tabs = [
   { key: TAB_COMPLETED, label: '已完成' }
 ]
 
-const activeTab = ref(TAB_PENDING)
+const route = useRoute()
+const routeTab = () => tabs.some(tab => tab.key === Number(route.query.status)) ? Number(route.query.status) : TAB_PENDING
+const activeTab = ref(routeTab())
+watch(() => route.query.status, () => { activeTab.value = routeTab() })
 const loading = ref(false)
 const orders = ref([])
+const workPage = ref(1)
+const workTotal = ref(0)
+const serverCounts = ref({ 20: 0, 30: 0, 40: 0, 50: 0, overtime: 0 })
+let queryVersion = 0
+let pendingRefresh = false
 const rooms = ref([])
 const roomsLoading = ref(false)
 const roomFilter = ref('')
 const keyword = ref('')
 const soundEnabled = ref(false)
+const soundStorageKey = `workbench-sound:${userStore.currentStoreId}:${userStore.userInfo?.id}`
+try { soundEnabled.value = localStorage.getItem(soundStorageKey) === 'true' } catch { /* Sound is optional. */ }
+const summaryError = ref(''), roomBalances = ref({}), newOrderCount = ref(0)
+const balanceDialogVisible = ref(false), balanceRoomId = ref('')
+const pendingMonitor = createPendingMonitor()
+let summaryFetching = false, audioContext = null
 
 const drawerVisible = ref(false)
 const drawerLoading = ref(false)
@@ -41,7 +69,6 @@ let fetching = false
 let disposed = false
 
 let pollTimer = null
-const seenPendingIds = reactive(new Set())
 
 const parseOrderTime = (val) => {
   if (!val) return dayjs('')
@@ -139,26 +166,22 @@ const refreshRooms = async () => {
   }
 }
 
-const applySort = (list) => {
-  const timeNum = (row) => {
-    const d = parseOrderTime(row?.createdAt)
-    return d.isValid() ? d.valueOf() : 0
-  }
-  return list.slice().sort((a, b) => timeNum(a) - timeNum(b))
-}
-
 const fetchOrders = async (silent = false) => {
-  if (fetching || disposed) return
+  if (disposed) return
+  if (fetching) { if (!silent) pendingRefresh = true; return }
+  const version = queryVersion
   fetching = true
   if (!silent) loading.value = true
   try {
-    const res = await request.get('/orders', { params: { page: 1, pageSize: 2000 }, silent })
+    const res = await request.get('/orders', { params: { page: workPage.value, pageSize: 24, status: activeTab.value, roomId: roomFilter.value || undefined, keyword: keyword.value || undefined, workbench: true }, silent })
     const list = (res.list || []).map(o => ({
       ...o,
       status: normalizeStatusCode(o.status) ?? o.status,
       payStatus: o?.payStatus ?? o?.pay_status
     }))
-    if (disposed) return
+    if (disposed || version !== queryVersion) return
+    serverCounts.value = res.counters || {}
+    workTotal.value = Number(res.total || 0)
     orders.value = list
     loadError.value = ''
     lastUpdated.value = dayjs().format('HH:mm:ss')
@@ -167,72 +190,37 @@ const fetchOrders = async (silent = false) => {
   } finally {
     fetching = false
     loading.value = false
+    if (pendingRefresh) { pendingRefresh = false; fetchOrders() }
   }
 }
 
-const filteredOrders = computed(() => {
-  const room = String(roomFilter.value || '').trim().toLowerCase()
-  const kw = String(keyword.value || '').trim().toLowerCase()
-  const target = activeTab.value
-  let list = orders.value || []
-  list = list.filter(o => Number(o?.status) === Number(target))
-  if (room) {
-    list = list.filter(o => String(o?.roomId ?? o?.roomName ?? '').toLowerCase().includes(room))
-  }
-  if (kw) {
-    list = list.filter(o => {
-      const hay = `${o?.orderNo ?? o?.orderNumber ?? ''} ${o?.roomId ?? o?.roomName ?? ''} ${o?.itemsSummary ?? ''}`.toLowerCase()
-      return hay.includes(kw)
-    })
-  }
-  return applySort(list)
-})
+const filteredOrders = computed(() => orders.value)
 
 const roomKeyOf = (row) => {
   const v = row?.roomId ?? row?.roomName
   return v === undefined || v === null ? '' : String(v)
 }
 
-const roomUnsettledCounts = computed(() => {
-  const map = {}
-  for (const o of filteredOrders.value || []) {
-    if (!isUnsettled(o)) continue
-    const rk = roomKeyOf(o)
-    if (!rk) continue
-    map[rk] = (map[rk] || 0) + 1
-  }
-  return map
-})
+const roomUnsettledCounts = computed(() => Object.fromEntries(Object.entries(roomBalances.value).map(([id, row]) => [id, row.unsettledCount])))
+const openRoomBalance = row => {
+  balanceRoomId.value = roomKeyOf(row)
+  if (balanceRoomId.value) balanceDialogVisible.value = true
+}
 
-const counts = computed(() => {
-  const room = String(roomFilter.value || '').trim().toLowerCase()
-  const kw = String(keyword.value || '').trim().toLowerCase()
-  let list = orders.value || []
-  if (room) {
-    list = list.filter(o => String(o?.roomId ?? o?.roomName ?? '').toLowerCase().includes(room))
-  }
-  if (kw) {
-    list = list.filter(o => {
-      const hay = `${o?.orderNo ?? o?.orderNumber ?? ''} ${o?.roomId ?? o?.roomName ?? ''} ${o?.itemsSummary ?? ''}`.toLowerCase()
-      return hay.includes(kw)
-    })
-  }
-  const counter = { 20: 0, 30: 0, 40: 0, 50: 0, overtime: 0 }
-  for (const o of list) {
-    const s = Number(o?.status)
-    if (s === 20) counter[20] += 1
-    if (s === 30) counter[30] += 1
-    if (s === 40) counter[40] += 1
-    if (s === 50) counter[50] += 1
-    const mins = waitMinutes(o)
-    if (mins !== null && mins >= 20) counter.overtime += 1
-  }
-  return counter
+const counts = computed(() => serverCounts.value)
+let filterTimer
+watch([activeTab, roomFilter, keyword], () => {
+  workPage.value = 1
+  queryVersion += 1
+  clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => fetchOrders(), 250)
 })
+watch(workPage, () => { queryVersion += 1; fetchOrders() })
 
 const beep = () => {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    const ctx = audioContext || (audioContext = new (window.AudioContext || window.webkitAudioContext)())
+    if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); return }
     const o = ctx.createOscillator()
     const g = ctx.createGain()
     o.type = 'sine'
@@ -243,30 +231,49 @@ const beep = () => {
     o.start()
     setTimeout(() => {
       o.stop()
-      ctx.close()
     }, 160)
   } catch {}
 }
 
-const checkNewPending = () => {
-  const pending = (orders.value || []).filter(o => Number(o?.status) === TAB_PENDING)
-  let hasNew = false
-  for (const o of pending) {
-    const id = o?.id ?? o?.orderId ?? o?.orderNo ?? o?.orderNumber
-    if (!id) continue
-    if (!seenPendingIds.has(String(id))) {
-      hasNew = true
-      seenPendingIds.add(String(id))
-    }
+const toggleSound = async () => {
+  soundEnabled.value = !soundEnabled.value
+  try { localStorage.setItem(soundStorageKey, String(soundEnabled.value)) } catch { /* Sound is optional. */ }
+  if (soundEnabled.value) {
+    try {
+      if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      await audioContext.resume()
+      beep()
+    } catch { ElMessage.warning('浏览器暂无法播放声音，新订单仍会显示提示') }
   }
-  if (hasNew && soundEnabled.value) beep()
 }
+
+const refreshSummary = async () => {
+  if (summaryFetching || disposed) return
+  summaryFetching = true
+  try {
+    const result = await request.get('/orders/operations-summary', { silent: true })
+    if (disposed) return
+    if (!Array.isArray(result.pendingOrderIds) || !Array.isArray(result.roomBalances)) throw new Error('Invalid summary')
+    roomBalances.value = roomBalancesById(result.roomBalances)
+    const added = pendingMonitor.update(result.pendingOrderIds)
+    if (added.length) { newOrderCount.value += added.length; if (soundEnabled.value) beep() }
+    summaryError.value = ''
+  } catch { if (!disposed) summaryError.value = '新单提醒及房间账款同步失败，将自动重试。' }
+  finally { summaryFetching = false }
+}
+
+const showNewOrders = () => {
+  newOrderCount.value = 0
+  activeTab.value = TAB_PENDING; roomFilter.value = ''; keyword.value = ''; workPage.value = 1
+  fetchOrders()
+}
+
+const refreshAll = () => Promise.all([fetchOrders(), refreshSummary()])
 
 const startPolling = () => {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
-    await fetchOrders(true)
-    checkNewPending()
+    await Promise.all([fetchOrders(true), refreshSummary()])
   }, 10000)
 }
 
@@ -298,14 +305,15 @@ const openDrawer = async (row) => {
 
 const refreshDrawer = async () => {
   if (!drawerOrderId.value) return
+  const key = drawerOrderId.value
   drawerLoading.value = true
   try {
-    const res = await request.get(`/orders/${drawerOrderId.value}`)
-    orderDetail.value = res
+    const res = await request.get(`/orders/${key}`)
+    if (drawerVisible.value && drawerOrderId.value === key) orderDetail.value = res
   } catch (e) {
     console.error(e)
   } finally {
-    drawerLoading.value = false
+    if (drawerOrderId.value === key) drawerLoading.value = false
   }
 }
 
@@ -360,14 +368,16 @@ const selectedAttrsText = (item) => {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchOrders(), refreshRooms()])
-  checkNewPending()
+  await Promise.all([fetchOrders(), refreshRooms(), refreshSummary()])
+  if (disposed) return
   startPolling()
 })
 
 onBeforeUnmount(() => {
   disposed = true
   stopPolling()
+  clearTimeout(filterTimer)
+  if (audioContext) audioContext.close().catch(() => {})
 })
 </script>
 
@@ -375,6 +385,8 @@ onBeforeUnmount(() => {
   <div class="space-y-4">
     <div class="flex justify-between items-center"><div><h2 class="text-2xl font-semibold text-slate-800">订单工作台</h2><p class="mt-1 text-sm text-slate-500">接单 → 备货 → 配送 → 完成 · 每 10 秒自动同步，声音可独立开启</p></div><span class="text-xs text-slate-500">{{ lastUpdated ? `最近同步 ${lastUpdated}` : '正在连接门店' }}</span></div>
     <el-alert v-if="loadError" :title="loadError" type="warning" :closable="false" show-icon />
+    <el-alert v-if="summaryError" :title="summaryError" type="warning" :closable="false" show-icon />
+    <el-alert v-if="newOrderCount" :title="`门店有 ${newOrderCount} 笔新待处理订单`" type="success" :closable="false" show-icon><el-button size="small" @click="showNewOrders">查看待处理订单</el-button></el-alert>
     <div class="flex flex-col gap-3 xl:flex-row xl:justify-between xl:items-center">
       <div class="flex flex-wrap gap-2 items-center">
         <el-radio-group v-model="activeTab">
@@ -385,8 +397,8 @@ onBeforeUnmount(() => {
         </el-radio-group>
       </div>
       <div class="flex flex-wrap gap-2 items-center">
-        <el-button :icon="Refresh" @click="fetchOrders(false)">刷新</el-button>
-        <el-button :icon="soundEnabled ? BellFilled : Bell" :type="soundEnabled ? 'primary' : 'default'" @click="soundEnabled = !soundEnabled">
+        <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
+        <el-button :icon="soundEnabled ? BellFilled : Bell" :type="soundEnabled ? 'primary' : 'default'" @click="toggleSound">
           声音提醒
         </el-button>
         <el-select v-model="roomFilter" placeholder="房间筛选" clearable filterable class="w-44" :loading="roomsLoading">
@@ -415,6 +427,7 @@ onBeforeUnmount(() => {
       </el-card>
     </div>
 
+    <el-pagination v-model:current-page="workPage" :page-size="24" :total="workTotal" layout="total, prev, pager, next" />
     <div v-loading="loading">
       <div v-if="filteredOrders.length === 0" class="p-10 text-center bg-white rounded border text-slate-400">暂无任务</div>
       <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
@@ -428,9 +441,7 @@ onBeforeUnmount(() => {
                   </div>
                   <el-tag :type="statusTagType(o.status)" effect="plain">{{ statusText(o.status) }}</el-tag>
                   <el-tag v-if="isUnsettled(o)" type="warning" effect="plain">挂账未结</el-tag>
-                  <el-tag v-if="roomUnsettledCounts[roomKeyOf(o)] > 1" type="warning" effect="plain">
-                    待结{{ roomUnsettledCounts[roomKeyOf(o)] }}单
-                  </el-tag>
+                  <el-button v-if="!summaryError && roomUnsettledCounts[roomKeyOf(o)]" link type="warning" size="small" @click="openRoomBalance(o)">房间待结 {{ roomUnsettledCounts[roomKeyOf(o)] }} 单 · ¥ {{ roomBalances[roomKeyOf(o)].unsettledAmount.toFixed(2) }}</el-button>
                 </div>
                 <div class="mt-1 font-mono text-xs truncate text-slate-500">
                   {{ o.orderNo || o.orderNumber || o.id }}
@@ -452,7 +463,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="flex gap-2 justify-end pt-4 mt-auto">
-              <el-button v-if="isUnsettled(o)" disabled size="small" title="未接入真实支付通道，暂不支持挂账结算">结算未开放</el-button>
+              <el-button v-if="isUnsettled(o) && userStore.hasPermission('pos:view')" :loading="statusPending[orderKeyOf(o)]" size="small" type="warning" @click="settleCash(o).catch(() => {})">现金结算</el-button>
               <el-button size="small" @click="openDrawer(o)">详情</el-button>
               <el-button v-if="canAct(o)" :loading="statusPending[orderKeyOf(o)]" type="primary" size="small" @click="updateStatus(o)">{{ actionTextOf(o) }}</el-button>
             </div>
@@ -508,10 +519,13 @@ onBeforeUnmount(() => {
           <el-button @click="refreshDrawer">刷新详情</el-button>
           <div class="flex gap-2">
             <el-button @click="drawerVisible = false">关闭</el-button>
+            <el-button v-if="orderDetail && !summaryError && roomUnsettledCounts[roomKeyOf(orderDetail)]" @click="openRoomBalance(orderDetail)">房间账款</el-button>
+            <el-button v-if="orderDetail && isUnsettled(orderDetail) && userStore.hasPermission('pos:view')" type="warning" :loading="statusPending[orderDetail.orderId]" @click="settleCash(orderDetail).catch(() => {})">现金结算</el-button>
             <el-button v-if="orderDetail && canAct(orderDetail)" :loading="statusPending[orderKeyOf(orderDetail)]" type="primary" @click="updateStatus(orderDetail)">{{ actionTextOf(orderDetail) }}</el-button>
           </div>
         </div>
       </template>
     </el-drawer>
+    <RoomBalanceDialog v-model="balanceDialogVisible" :room-id="balanceRoomId" @settled="refreshAll" />
   </div>
 </template>

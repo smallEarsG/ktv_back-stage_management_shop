@@ -2,15 +2,16 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import request from '@/lib/request'
+import { authStorage } from '@/lib/auth-storage'
 
 export const useUserStore = defineStore('user', () => {
-  const token = ref(localStorage.getItem('token'))
-  const currentStoreId = ref(localStorage.getItem('currentStoreId') || '')
+  const token = ref(authStorage.getItem('token'))
+  const currentStoreId = ref(authStorage.getItem('currentStoreId') || '')
   
   // Initialize userInfo
   let storedUserInfo = null
   try {
-    storedUserInfo = localStorage.getItem('userInfo') ? JSON.parse(localStorage.getItem('userInfo')) : null
+    storedUserInfo = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : null
   } catch (e) {
     storedUserInfo = null
   }
@@ -18,6 +19,16 @@ export const useUserStore = defineStore('user', () => {
   const userInfo = ref(storedUserInfo)
   const permissions = ref(userInfo.value?.permissions || []) 
   const router = useRouter()
+
+  let lastRefresh = 0
+  async function refresh(force = false) {
+    if (!token.value || (!force && Date.now() - lastRefresh < 30000)) return
+    const user = await request.get('/auth/user', { silent: true })
+    userInfo.value = user
+    permissions.value = user.permissions || []
+    authStorage.setItem('userInfo', JSON.stringify(user))
+    lastRefresh = Date.now()
+  }
 
   async function login(loginForm) {
     try {
@@ -41,11 +52,11 @@ export const useUserStore = defineStore('user', () => {
       // Set current store ID
       if (defaultStoreId !== undefined && defaultStoreId !== null) {
         currentStoreId.value = defaultStoreId.toString()
-        localStorage.setItem('currentStoreId', defaultStoreId)
+        authStorage.setItem('currentStoreId', defaultStoreId)
       }
       
-      localStorage.setItem('token', accessToken)
-      localStorage.setItem('userInfo', JSON.stringify(user))
+      authStorage.setItem('token', accessToken)
+      authStorage.setItem('userInfo', JSON.stringify(user))
       return true
     } catch (error) {
       console.error('Login failed:', error)
@@ -58,9 +69,9 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = null
     permissions.value = []
     currentStoreId.value = ''
-    localStorage.removeItem('token')
-    localStorage.removeItem('userInfo')
-    localStorage.removeItem('currentStoreId')
+    authStorage.removeItem('token')
+    authStorage.removeItem('userInfo')
+    authStorage.removeItem('currentStoreId')
     router.replace('/login')
   }
 
@@ -77,7 +88,7 @@ export const useUserStore = defineStore('user', () => {
     // Update userInfo as well to keep them in sync
     if (userInfo.value) {
       userInfo.value.permissions = newPermissions
-      localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
+      authStorage.setItem('userInfo', JSON.stringify(userInfo.value))
     }
   }
 
@@ -89,6 +100,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     logout,
     hasPermission,
-    setPermissions
+    setPermissions,
+    refresh
   }
 })

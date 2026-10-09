@@ -4,7 +4,7 @@ import Login from '@/views/Login.vue'
 import { useUserStore } from '@/stores/user'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
@@ -62,8 +62,20 @@ const router = createRouter({
         {
           path: 'finance',
           name: 'Finance',
-          component: () => import('@/views/finance/FinanceList.vue'),
+          redirect: '/finance/overview',
           meta: { title: '财务管理', requiresAuth: true, permission: 'finance:view' }
+        },
+        {
+          path: 'finance/overview',
+          name: 'FinanceOverview',
+          component: () => import('@/views/finance/FinanceOverview.vue'),
+          meta: { title: '财务看板', requiresAuth: true, permission: 'finance:view' }
+        },
+        {
+          path: 'finance/flows',
+          name: 'FinanceFlows',
+          component: () => import('@/views/finance/FinanceList.vue'),
+          meta: { title: '资金流水', requiresAuth: true, permission: 'finance:view' }
         },
         {
           path: 'warehouse',
@@ -82,8 +94,11 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
+  if (to.meta.requiresAuth && userStore.token) {
+    try { await userStore.refresh() } catch { userStore.logout(); next('/login'); return }
+  }
   if (to.meta.requiresAuth && !userStore.token) {
     next('/login')
   } else if (to.meta.permission && !userStore.hasPermission(to.meta.permission)) {

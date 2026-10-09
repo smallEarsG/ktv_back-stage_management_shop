@@ -27,7 +27,10 @@ const menuItems = [
   { path: '/orders', icon: List, label: '订单管理', permission: 'order:view' },
   { path: '/products', icon: Goods, label: '商品管理', permission: 'product:view' },
   { path: '/refunds', icon: RefreshLeft, label: '退款售后', permission: 'refund:view' },
-  { path: '/finance', icon: Money, label: '财务管理', permission: 'finance:view' },
+  { path: '/finance', icon: Money, label: '财务管理', permission: 'finance:view', children: [
+    { path: '/finance/overview', label: '财务看板' },
+    { path: '/finance/flows', label: '资金流水' }
+  ] },
   { path: '/warehouse', icon: Box, label: '仓库管理', permission: 'warehouse:view' },
   { path: '/settings', icon: Setting, label: '门店设置', permission: 'settings:view' }
 ]
@@ -63,12 +66,13 @@ const handleLogout = () => {
     <el-aside width="220px" class="flex flex-col text-white bg-slate-900">
       <!-- Logo -->
       <div class="flex justify-center items-center h-16 text-xl font-bold border-b border-slate-800 bg-slate-900">
-        <span class="mr-2 text-blue-500">KTV</span> 商户后台
+        商户后台
       </div>
       
       <!-- Menu -->
       <el-menu
         :default-active="route.path"
+        :default-openeds="['/finance']"
         class="overflow-y-auto flex-1 border-none"
         router
         text-color="#94a3b8"
@@ -76,7 +80,11 @@ const handleLogout = () => {
         background-color="#0f172a"
       >
         <template v-for="item in filteredMenuItems" :key="item.path">
-          <el-menu-item :index="item.path">
+          <el-sub-menu v-if="item.children" :index="item.path">
+            <template #title><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></template>
+            <el-menu-item v-for="child in item.children" :key="child.path" :index="child.path">{{ child.label }}</el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="item.path">
             <el-icon><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
           </el-menu-item>
@@ -108,7 +116,7 @@ const handleLogout = () => {
       </el-header>
       
       <el-main class="overflow-y-auto relative p-6 bg-slate-50">
-        <el-alert v-if="demoMode" title="本地演示 · 仅使用测试数据；线上支付和退款未开放。" type="info" :closable="false" class="mb-5" show-icon />
+        <el-alert v-if="demoMode" title="演示环境 · 仅使用测试数据；演示支付不扣款，真实支付和退款未开放。" type="info" :closable="false" class="mb-5" show-icon />
         <router-view v-slot="{ Component }">
           <transition name="fade">
             <Suspense>

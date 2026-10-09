@@ -1,11 +1,14 @@
 <script setup>
 import { ref, watch, onMounted, computed, reactive } from 'vue'
 import { useRoute } from 'vue-router'
+import CashierPaymentDialog from '@/components/CashierPaymentDialog.vue'
 import { Search, Filter } from '@element-plus/icons-vue'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
 import request from '@/lib/request'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
+import { dateRangeParams } from '@/lib/date-range'
+import { useUserStore } from '@/stores/user'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
 dayjs.extend(customParseFormat)
@@ -23,6 +26,10 @@ const orderDetail = ref(null)
 const statusPending = reactive({})
 const payStatusFilter = ref('all')
 const route = useRoute()
+const payDialog = ref(false)
+const payOrderId = ref(null)
+const canResume = row => Number(row?.source) === 2 && Number(row?.payMethod) === 1 && Number(row?.status) === 10 && [0, 1].includes(Number(row?.payStatus)) && userStore.hasPermission('pos:view')
+const resumePayment = row => { payOrderId.value = row.orderId || row.id; payDialog.value = true }
 
 const statusOptions = [
   { value: 'all', label: '全部' },
@@ -180,67 +187,22 @@ const waitTagType = (row) => {
   return 'info'
 }
 
-const applyDefaultSort = (list) => {
-  const rank = (s) => {
-    const v = Number(s)
-    if (v === 20) return 1
-    if (v === 91) return 2
-    if (v === 30) return 3
-    return 9
-  }
-  const timeNum = (row) => {
-    const d = dayjs(row?.createdAt)
-    return d.isValid() ? d.valueOf() : 0
-  }
-  return list
-    .slice()
-    .sort((a, b) => rank(a?.status) - rank(b?.status) || timeNum(b) - timeNum(a))
-}
-
-const filteredOrders = computed(() => {
-  const keyword = String(searchQuery.value || '').trim().toLowerCase()
-  const status = activeStatus.value
-  const start = Array.isArray(dateRange.value) && dateRange.value[0] ? dayjs(dateRange.value[0]) : null
-  const end = Array.isArray(dateRange.value) && dateRange.value[1] ? dayjs(dateRange.value[1]) : null
-
-  let list = rawOrders.value || []
-  if (status === 'credit_unsettled') {
-    list = list.filter(o => isCreditUnsettled(o))
-  } else if (status && status !== 'all') {
-    list = list.filter(o => String(o?.status) === String(status))
-  }
-  if (payStatusFilter.value !== 'all' && status !== 'credit_unsettled') {
-    list = list.filter(o => String(payStatusCodeOf(o)) === String(payStatusFilter.value))
-  }
-  if (keyword) {
-    list = list.filter(o => {
-      const hay = `${o?.orderNumber ?? ''} ${o?.roomName ?? ''} ${o?.itemsSummary ?? ''}`.toLowerCase()
-      return hay.includes(keyword)
-    })
-  }
-  if (start?.isValid() && end?.isValid()) {
-    list = list.filter(o => {
-      const d = parseOrderTime(o?.createdAt)
-      if (!d.isValid()) return true
-      return (d.isAfter(start) || d.isSame(start)) && (d.isBefore(end) || d.isSame(end))
-    })
-  }
-  return applyDefaultSort(list)
-})
-
-const totalCount = computed(() => filteredOrders.value.length)
-
-const pagedOrders = computed(() => {
-  const list = filteredOrders.value
-  const start = (currentPage.value - 1) * pageSize.value
-  return list.slice(start, start + pageSize.value)
-})
+const totalCount = ref(0)
+const pagedOrders = computed(() => rawOrders.value)
+const userStore = useUserStore()
+let requestSequence = 0
 
 const fetchOrders = async () => {
+  const sequence = ++requestSequence
   loading.value = true
   try {
-    const res = await request.get('/orders', { params: { page: 1, pageSize: 2000 } })
+    const res = await request.get('/orders', { params: {
+      page: currentPage.value, pageSize: pageSize.value, status: activeStatus.value,
+      keyword: searchQuery.value || undefined, payStatus: payStatusFilter.value, ...dateRangeParams(dateRange.value)
+    } })
+    if (sequence !== requestSequence) return
     rawOrders.value = res.list || []
+    totalCount.value = Number(res.total || 0)
   } catch (e) {
     console.error(e)
   } finally {
@@ -267,25 +229,29 @@ const handleStatusChange = async (row, nextStatus) => {
   }
 }
 
-const handleFilter = () => {
+const handleFilter = () => { currentPage.value = 1; fetchOrders() }
+let filterTimer
+watch([activeStatus, searchQuery, dateRange, payStatusFilter], () => {
   currentPage.value = 1
+  clearTimeout(filterTimer)
+  filterTimer = setTimeout(fetchOrders, 250)
+})
+watch([currentPage, pageSize], fetchOrders)
+
+const cancelOrder = async (row) => {
+  await ElMessageBox.confirm('确认取消未付款订单并释放库存？', '取消订单', { type: 'warning' })
+  return handleStatusChange(row, 90)
 }
 
-watch(activeStatus, () => {
-  currentPage.value = 1
-})
-
-watch(searchQuery, () => {
-  currentPage.value = 1
-})
-
-watch(dateRange, () => {
-  currentPage.value = 1
-})
-
-watch(payStatusFilter, () => {
-  currentPage.value = 1
-})
+const settleCash = async (row) => {
+  if (statusPending[row.id]) return
+  await ElMessageBox.confirm('请确认已收到此订单的全部现金，再登记结算。', '确认现金到账', { type: 'warning' })
+  statusPending[row.id] = true
+  try {
+    await request.post(`/cashier/orders/${row.id}/settle`, { payMethod: 2 })
+    ElMessage.success('现金结算成功'); await fetchOrders()
+  } finally { statusPending[row.id] = false }
+}
 
 const applyRouteFilters = () => {
   if (route.query?.status !== undefined) {
@@ -355,7 +321,7 @@ watch(
     <div class="flex flex-col gap-4 justify-between items-start mb-6 xl:flex-row xl:items-center">
       <h2 class="text-2xl font-bold text-slate-800">订单管理</h2>
       <div class="flex flex-wrap gap-2 items-center">
-        <TimeRangePicker v-model="dateRange" @change="handleDateRangeChange" />
+        <TimeRangePicker v-model="dateRange" allow-all :default-shortcut="route.query.dateScope === 'all' ? 'all' : 'today'" @change="handleDateRangeChange" />
         <el-select v-model="payStatusFilter" class="w-36" placeholder="支付状态">
           <el-option label="支付全部" value="all" />
           <el-option label="未支付" value="0" />
@@ -428,20 +394,14 @@ watch(
       </el-table-column>
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button
-            v-if="isCreditUnsettled(row)"
-            type="warning"
-            size="small"
-            disabled title="真实支付结算尚未接入"
-          >
-            挂账结算
-          </el-button>
+          <el-button v-if="isCreditUnsettled(row) && userStore.hasPermission('pos:view')" size="small" type="warning" :loading="statusPending[row.id]" @click="settleCash(row).catch(() => {})">现金结算</el-button>
+          <el-button v-if="canResume(row)" size="small" @click="resumePayment(row)">继续支付 / 查询</el-button>
           <template v-if="Number(row.status) === 10">
-            <el-button type="danger" size="small" disabled>取消订单</el-button>
+            <el-button type="danger" size="small" :loading="statusPending[row.id]" @click="cancelOrder(row).catch(() => {})">取消订单</el-button>
           </template>
           <template v-else-if="Number(row.status) === 20">
             <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 30)">接单</el-button>
-            <el-button type="danger" size="small" disabled>取消</el-button>
+            <el-button type="danger" size="small" :disabled="!isCreditUnsettled(row)" :loading="statusPending[row.id]" @click="cancelOrder(row).catch(() => {})">取消</el-button>
           </template>
           <template v-else-if="Number(row.status) === 30">
             <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 40)">开始配送</el-button>
@@ -451,14 +411,6 @@ watch(
           </template>
           <template v-else-if="Number(row.status) === 50">
             <el-button link type="primary" size="small" @click="openOrderDetail(row)">详情</el-button>
-          </template>
-          <template v-else-if="Number(row.status) === 91">
-            <el-tooltip content="该操作后端暂未开放接口" placement="top">
-              <el-button type="primary" size="small" disabled>同意退款</el-button>
-            </el-tooltip>
-            <el-tooltip content="该操作后端暂未开放接口" placement="top">
-              <el-button type="danger" size="small" disabled>拒绝退款</el-button>
-            </el-tooltip>
           </template>
           <template v-else>
             <el-button link type="primary" size="small" @click="openOrderDetail(row)">详情</el-button>
@@ -535,18 +487,13 @@ watch(
         <div class="flex justify-between items-center w-full">
           <div></div>
           <div class="flex gap-2">
-            <el-button
-              v-if="Number(orderDetail?.payStatus) === 0"
-              disabled title="真实支付结算尚未接入"
-              type="warning"
-
-            >
-              挂账结算
-            </el-button>
+            <el-button v-if="isCreditUnsettled(orderDetail) && userStore.hasPermission('pos:view')" type="warning" :loading="statusPending[orderDetail?.orderId]" @click="settleCash({ ...orderDetail, id: orderDetail.orderId }).then(() => openOrderDetail({ id: orderDetail.orderId })).catch(() => {})">现金结算</el-button>
+            <el-button v-if="canResume(orderDetail)" @click="resumePayment(orderDetail)">继续支付 / 查询</el-button>
             <el-button type="primary" @click="showDetailDialog = false">关闭</el-button>
           </div>
         </div>
       </template>
     </el-dialog>
+    <CashierPaymentDialog v-model="payDialog" :order-id="payOrderId" @confirmed="fetchOrders" />
   </div>
 </template>

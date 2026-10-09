@@ -6,13 +6,17 @@ const props = defineProps({
   modelValue: {
     type: Array,
     default: () => []
-  }
+  },
+  allowAll: { type: Boolean, default: false },
+  defaultShortcut: { type: String, default: 'today' },
+  clearable: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['update:modelValue', 'change', 'update:label'])
 
 // Shortcuts configuration
 const shortcuts = [
+  ...(props.allowAll ? [{ text: '全部时间', value: 'all', onClick: () => [] }] : []),
   {
     text: '今日',
     value: 'today',
@@ -53,8 +57,9 @@ const shortcuts = [
 
 // Initialize logic
 const hasInitialValue = props.modelValue && props.modelValue.length > 0
-const initialShortcut = hasInitialValue ? 'custom' : 'today'
-const initialRange = hasInitialValue ? props.modelValue : shortcuts.find(s => s.value === 'today').onClick()
+const defaultShortcut = shortcuts.find(s => s.value === props.defaultShortcut) || shortcuts.find(s => s.value === 'today')
+const initialShortcut = hasInitialValue ? 'custom' : defaultShortcut.value
+const initialRange = hasInitialValue ? props.modelValue : defaultShortcut.onClick()
 
 // Internal date range value
 const dateRange = ref(initialRange)
@@ -66,24 +71,24 @@ const handleShortcutClick = (shortcut) => {
   const range = shortcut.onClick()
   dateRange.value = range
   emit('update:modelValue', range)
-  emit('change', range)
   emit('update:label', shortcut.text)
+  emit('change', range)
 }
 
 // Handle date picker change
 const handleDateChange = (val) => {
   activeShortcut.value = 'custom'
   emit('update:modelValue', val)
-  emit('change', val)
   emit('update:label', '自定义')
+  emit('change', val)
 }
 
 // Emit initial value if default is used
 onMounted(() => {
   if (!hasInitialValue) {
     emit('update:modelValue', dateRange.value)
+    emit('update:label', defaultShortcut.text)
     emit('change', dateRange.value)
-    emit('update:label', shortcuts.find(s => s.value === 'today').text)
   } else {
     // If initial value provided, it's custom unless we match it (ignoring matching for now)
     emit('update:label', '自定义')
@@ -117,6 +122,7 @@ onMounted(() => {
       end-placeholder="结束日期"
       size="default"
       :shortcuts="[]" 
+      :clearable="clearable"
       @change="handleDateChange"
     />
   </div>

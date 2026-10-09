@@ -2,7 +2,15 @@
 import { ref, onMounted, reactive, computed } from 'vue'
 import { Plus, Edit, Delete, MoreFilled, Search } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/user'
+import { inventorySummary } from '@/lib/inventory'
 import request from '@/lib/request'
+
+const router = useRouter()
+const userStore = useUserStore()
+const canManageInventory = computed(() => userStore.hasPermission('warehouse:view'))
+const goToWarehouse = (row, action) => router.push({ path: '/warehouse', query: { productId: String(row.id), action } })
 
 const activeCategory = ref('')
 const showEditDialog = ref(false)
@@ -12,6 +20,8 @@ const categories = ref([])
 const products = ref([])
 const total = ref(0)
 const loading = ref(false)
+const statusPending = reactive({})
+let productRequestSequence = 0
 const allCategoryId = 'all'
 const uploadFileList = ref([])
 const showImagePreview = ref(false)
@@ -125,7 +135,7 @@ const normalizeSku = (sku, fallbackThreshold = 10) => {
 }
 
 const normalizeProduct = (p) => {
-  const baseThreshold = Number(p?.lowStockThreshold ?? 10) || 10
+  const baseThreshold = Number(p?.lowStockThreshold ?? 10)
   const rawSkus = Array.isArray(p?.skus) ? p.skus : []
   const skus = rawSkus.map(s => normalizeSku(s, baseThreshold))
   if (!skus.length) {
@@ -147,7 +157,7 @@ const normalizeProduct = (p) => {
     ...p,
     price: Number(p?.price ?? 0) || 0,
     stock: Number(p?.stock ?? 0) || 0,
-    lowStockThreshold: Number(p?.lowStockThreshold ?? baseThreshold) || baseThreshold,
+    lowStockThreshold: Number(p?.lowStockThreshold ?? baseThreshold),
     skus,
     specList,
     hasSpecs
@@ -224,6 +234,7 @@ const fetchCategories = async () => {
 }
 
 const fetchProducts = async () => {
+  const sequence = ++productRequestSequence
   loading.value = true
   try {
     const params = { ...queryParams }
@@ -233,13 +244,33 @@ const fetchProducts = async () => {
     const res = await request.get('/products', {
       params
     })
+    if (sequence !== productRequestSequence) return
+    const lastPage = Math.max(1, Math.ceil(Number(res.total || 0) / queryParams.pageSize))
+    if (queryParams.page > lastPage) {
+      queryParams.page = lastPage
+      return await fetchProducts()
+    }
     products.value = (res.list || []).map(normalizeProduct)
     total.value = res.total || 0
   } catch (e) {
     console.error(e)
   } finally {
-    loading.value = false
+    if (sequence === productRequestSequence) loading.value = false
   }
+}
+
+const filterProducts = () => { queryParams.page = 1; return fetchProducts() }
+const handleProductPageChange = page => { queryParams.page = page; return fetchProducts() }
+const handleProductPageSizeChange = size => { queryParams.pageSize = size; return filterProducts() }
+const changeProductStatus = async (row, active) => {
+  if (statusPending[row.id]) return
+  statusPending[row.id] = true
+  try {
+    await request.put(`/products/${row.id}`, { active })
+    ElMessage.success(active ? '商品已上架' : '商品已下架')
+  } catch {
+    row.status = !active
+  } finally { statusPending[row.id] = false }
 }
 
 const handleAdd = () => {
@@ -332,14 +363,7 @@ const handleDelete = async (row) => {
       confirmButtonText: '删除',
       cancelButtonText: '取消'
     })
-    const token = localStorage.getItem('token') || ''
-    const storeId = localStorage.getItem('storeId') || ''
-    await request.delete(`/products/${row.id}`, {
-      headers: {
-        Authorization: token ? `Bearer ${token}` : '',
-        'X-Store-Id': storeId || ''
-      }
-    })
+    await request.delete(`/products/${row.id}`)
     ElMessage.success('操作成功')
     fetchProducts()
   } catch (e) {
@@ -357,19 +381,10 @@ const saveProduct = async () => {
       ElMessage.error('至少需要 1 条SKU')
       return
     }
-    const intFieldsOk = (v) => Number.isInteger(Number(v)) && Number(v) >= 0
     for (const sku of productForm.skus) {
       const price = Number(sku.price)
-      if (!Number.isFinite(price) || price < 0) {
+      if (!Number.isFinite(price) || price <= 0 || Math.abs(price * 100 - Math.round(price * 100)) > 0.000001) {
         ElMessage.error('SKU价格不合法')
-        return
-      }
-      if (!intFieldsOk(sku.stock)) {
-        ElMessage.error('SKU库存不合法')
-        return
-      }
-      if (!intFieldsOk(sku.lowStockThreshold)) {
-        ElMessage.error('SKU预警阈值不合法')
         return
       }
       const cfg = sku?.attrConfig
@@ -387,9 +402,7 @@ const saveProduct = async () => {
         }
       }
     }
-    const totalStock = productForm.skus.reduce((sum, s) => sum + (Number(s.stock) || 0), 0)
     const minPrice = Math.min(...productForm.skus.map(s => Number(s.price) || 0))
-    const minThreshold = Math.min(...productForm.skus.map(s => Number(s.lowStockThreshold) || 0))
     const payload = {
       name: productForm.name,
       categoryId: productForm.categoryId,
@@ -401,14 +414,10 @@ const saveProduct = async () => {
         id: s.id ?? null,
         specs: productForm.hasSkus ? (s.specs || {}) : [],
         price: Number(s.price) || 0,
-        stock: Number(s.stock) || 0,
-        lowStockThreshold: Number(s.lowStockThreshold) || 0,
         skuCode: s.skuCode ?? '',
         attrConfigJson: Array.isArray(s.attrConfig) ? JSON.stringify(s.attrConfig) : ((s.attrConfigJson || '{}').trim() || '{}')
       })),
-      price: minPrice === Infinity ? 0 : minPrice,
-      stock: totalStock,
-      lowStockThreshold: minThreshold === Infinity ? 10 : minThreshold
+      price: minPrice === Infinity ? 0 : minPrice
     }
     if (productForm.id) {
       await request.put(`/products/${productForm.id}`, payload)
@@ -547,7 +556,7 @@ const handleUploadExceed = () => {
 
 const onSelectCategory = (index) => {
   activeCategory.value = index
-  fetchProducts()
+  return filterProducts()
 }
 
 const displayTotalStock = computed(() => {
@@ -561,8 +570,7 @@ const displayMinPrice = computed(() => {
 })
 
 const getRowClass = ({ row }) => {
-  const threshold = Number(row.lowStockThreshold ?? 10)
-  return Number(row.stock) < threshold ? 'bg-red-50' : ''
+  return inventorySummary(row).lowCount > 0 ? 'bg-red-50' : ''
 }
 
 const getSpecNames = (product) => {
@@ -732,7 +740,7 @@ onMounted(() => {
     </el-card>
 
     <!-- Product List -->
-    <el-card class="flex-1">
+    <el-card class="flex-1 min-w-0">
       <template #header>
         <div class="flex justify-between items-center">
           <span class="font-bold">商品列表</span>
@@ -743,8 +751,8 @@ onMounted(() => {
               class="w-64"
               clearable
               :prefix-icon="Search"
-              @keyup.enter="fetchProducts"
-              @clear="fetchProducts"
+              @keyup.enter="filterProducts"
+              @clear="filterProducts"
             />
             <el-button type="primary" :icon="Plus" @click="handleAdd">新增商品</el-button>
           </div>
@@ -800,23 +808,31 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="stock" label="库存" width="110">
            <template #default="{ row }">
-             <el-tag :type="Number(row.stock) < Number(row.lowStockThreshold ?? 10) ? 'danger' : 'success'" round>{{ row.stock }}</el-tag>
+             <el-tag :type="inventorySummary(row).lowCount > 0 ? 'danger' : 'success'" round>{{ row.stock }}</el-tag>
            </template>
         </el-table-column>
-        <el-table-column prop="lowStockThreshold" label="低库存预警" width="120" />
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column label="库存预警" width="170">
           <template #default="{ row }">
-            <el-switch v-model="row.status" />
+            <el-tag v-if="inventorySummary(row).lowCount" type="danger" size="small">{{ inventorySummary(row).lowCount }}个规格库存不足</el-tag>
+            <span v-else class="text-slate-500">正常</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" @change="active => changeProductStatus(row, active)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" :width="canManageInventory ? 300 : 200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
             <el-button link type="primary" @click="openProductDetail(row)">详情</el-button>
+            <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'inbound')">入库</el-button>
+            <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'stocktake')">盘点</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="mt-4" />
     </el-card>
 
     <el-dialog v-model="showDetailDialog" title="商品详情" width="720px">
@@ -879,6 +895,7 @@ onMounted(() => {
     </el-dialog>
     <el-dialog v-model="showEditDialog" :title="productForm.id ? '编辑商品' : '新增商品'" width="860px">
       <el-form label-width="80px" :model="productForm" :rules="productRules" ref="productFormRef">
+        <el-alert :title="productForm.id ? '库存和预警值由仓库管理维护，编辑商品不会修改库存。已有库存或业务记录的规格请保留。' : '新商品和新规格的库存为0，保存后请到仓库管理办理入库。'" type="info" :closable="false" class="mb-4" />
         <el-form-item label="商品类型" prop="categoryId">
           <el-select v-model="productForm.categoryId" placeholder="请选择商品类型" class="w-full">
             <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="String(cat.id)" />
@@ -920,7 +937,7 @@ onMounted(() => {
               :data="productForm.skus"
               border
               :fit="true"
-              class="min-w-[760px]"
+              class="min-w-[720px]"
               size="small"
               :row-key="sku => sku.id ?? sku.__key"
               :key="`${productForm.hasSkus}:${(productForm.specs?.length || 0)}:${(productForm.skus?.length || 0)}`"
@@ -933,13 +950,13 @@ onMounted(() => {
                 <template #default="{ row }">{{ spec.name ? (row.specs?.[spec.name] ?? '') : '' }}</template>
               </el-table-column>
               <el-table-column label="价格" width="140">
-                <template #default="{ row }"><el-input-number v-model="row.price" :min="0" :precision="2" size="small" class="w-full" /></template>
+                <template #default="{ row }"><el-input-number v-model="row.price" :min="0.01" :precision="2" size="small" class="w-full" /></template>
               </el-table-column>
-              <el-table-column label="库存" width="140">
-                <template #default="{ row }"><el-input-number v-model="row.stock" :min="0" :precision="0" size="small" class="w-full" /></template>
+              <el-table-column label="当前库存" width="120">
+                <template #default="{ row }"><span>{{ row.id ? row.stock : 0 }}</span><span v-if="!row.id" class="ml-2 text-xs text-slate-400">待入库</span></template>
               </el-table-column>
-              <el-table-column label="预警阈值" width="140">
-                <template #default="{ row }"><el-input-number v-model="row.lowStockThreshold" :min="0" :precision="0" size="small" class="w-full" /></template>
+              <el-table-column label="预警阈值" width="100">
+                <template #default="{ row }">{{ row.id ? row.lowStockThreshold : 10 }}</template>
               </el-table-column>
               <el-table-column label="编码" width="120">
                 <template #default="{ row }"><el-input v-model="row.skuCode" size="small" placeholder="SKU编码" /></template>

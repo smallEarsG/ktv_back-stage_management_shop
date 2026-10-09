@@ -240,6 +240,23 @@ Authorization: Bearer <token>
 
 ---
 
+### 5.3 收银与工作台同步
+
+以下接口使用当前门店上下文，读取需要订单、工作台或收银权限；收款和核价需要收银权限。
+
+| 接口 | 参数 | 返回内容 |
+| --- | --- | --- |
+| `GET /orders/operations-summary` | 无 | `pendingOrderIds`：门店全部待处理订单 ID；`roomBalances`：按房间汇总的 `unsettledCount`、`unsettledAmount`、`pendingPaymentCount`，不受列表标签、分页或筛选影响 |
+| `GET /orders/by-client-no` | `clientOrderNo` | 当前员工在当前门店创建的原收银订单详情；未找到时 `data` 为 `null` |
+| `GET /orders/room-unsettled` | `roomId` | 本房间全部可现金结算的挂账订单快照 `orders` 和总额 `amountTotal` |
+| `POST /cashier/quote` | `storeId`、`roomId`、`items` | 按服务端价格核算的 `amountTotal`；只核价，不开单或扣库存 |
+
+现金开单 `POST /cashier/orders` 可附带 `expectedAmount` 和 `cashReceived`。价格与确认金额不一致、现金不足或精度超过两位小数时拒绝创建，重新核价后再确认。
+
+房间结算 `POST /cashier/rooms/{roomId}/settle` 传入 `payMethod: 2`、本次已核对的 `orderIds`、`expectedAmount`、`cashReceived`。后端锁定并核对这些订单，只结算所列订单，新增挂账保持未结；返回 `settledCount`、`amountTotal`、`cashReceived`、`changeAmount`。快照发生变化时需要刷新账款再确认。
+
+未确认提交在浏览器按门店和员工保存原请求。刷新后先查 `by-client-no`；重试必须使用保存的原请求和原 `clientOrderNo`。业务明确拒绝返回 400/409；网络故障或 5xx 不能视为订单未创建。
+
 ## 6. 退款/售后 (Refunds)
 
 ### 6.1 申请退款
@@ -358,3 +375,25 @@ The response is returned in JSON format.
 ```
 ### Response Parameter Description
 Parameter Type Description code Integer Status code (200 indicates success, 500 indicates failure) message String Response message or error description data Object Response data payload url String The URL of the uploaded image fileName String The original name of the uploaded file
+
+## 9. 财务管理 (Finance)
+
+页面入口：`/finance/overview`（财务看板）、`/finance/flows`（资金流水）；旧入口 `/finance` 跳转到财务看板。接口统一需要 `finance:view` 权限，并按当前门店隔离数据。
+
+除未结挂账和流水详情外，以下接口支持 `period`（默认 `today`，可选 `week`、`month`、`year`、`yesterday`、`custom`）、`startTime`、`endTime`。显式时间范围优先，起点包含、终点不包含；时间格式为 `YYYY-MM-DD HH:mm:ss`。`custom` 必须提供起止时间。
+
+| GET 接口 | 返回的 data |
+| --- | --- |
+| `/finance/summary` | `income`、`refund`、`net` 三项金额与比较结果，以及 `comparison.startTime/endTime` 对比时段 |
+| `/finance/trend` | `xAxis` 与收款、退款、净收款三组 `series`；短时段按小时、长时段按日统计，缺少记录的时间段补 0 |
+| `/finance/payment-methods` | `list`，每项包含 `payMethod`、`count`、`amount`，按收款金额统计 |
+| `/finance/receivables` | `count`、`amount`，当前门店全部未结挂账，不受日期筛选影响 |
+| `/finance/flows` | `total`、`list`，支持下述筛选和分页参数 |
+| `/finance/flows/{type}/{id}` | `flow` 与关联 `order`（含商品明细），仅能查看本门店流水关联的订单 |
+| `/finance/flows/export` | CSV 文件，使用与流水列表相同的筛选，包含全部页；超过 10,000 条时需缩小范围 |
+
+统计口径：收款按已支付订单的支付时间统计；退款只包含已完成退款，按完成时间统计；净收款等于收款减退款，可以为负数。每项汇总包含 `amount`、`trend`、`percentage`、`comparable`；上一周期基数小于等于 0 时，`comparable=false`、`percentage=null`，不展示增长率。
+
+流水列表与导出筛选：`type` 为 `income`（收款）或 `refund`（退款），为空时包含两者；`payMethod` 为 `1`（扫码）、`2`（现金）、`3`（挂账）、`0`（其他）；`keyword` 匹配订单号或退款单号。列表额外支持 `page`（默认 1）、`pageSize`（默认 20，最多 200）；导出不受分页影响。
+
+流水字段包含 `id`、`flowId`、`type`、`businessNo`、`orderId`、`orderNo`、`time`、`roomId`、`payMethod`、`amount`、`refundChannel`、`reason`。`flowId` 使用 `income-{id}` 或 `refund-{id}` 避免订单和退款 ID 重复；JSON 中退款金额为正值，页面和 CSV 使用负号表示资金流出。

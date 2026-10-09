@@ -7,6 +7,9 @@ import { Iphone, Lock } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
+const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
+const demoAccount = import.meta.env.VITE_DEMO_ACCOUNT || 'merchant-local'
+const demoPassword = import.meta.env.VITE_DEMO_PASSWORD || 'LocalDemo123!'
 
 const loading = ref(false)
 const form = reactive({
@@ -64,7 +67,7 @@ const handleLogin = async () => {
   <div class="h-screen w-full flex items-center justify-center bg-slate-900">
     <div class="w-full max-w-md p-8 bg-white rounded-lg shadow-lg">
       <div class="text-center mb-8">
-        <h1 class="text-3xl font-bold text-slate-800">KTV 商户后台</h1>
+        <h1 class="text-3xl font-bold text-slate-800">商户后台</h1>
         <p class="text-slate-500 mt-2">请登录您的账户</p>
       </div>
       
@@ -100,8 +103,8 @@ const handleLogin = async () => {
           登录
         </el-button>
         
-        <div class="mt-4 text-center text-sm text-slate-400">
-          本地演示账号：merchant-local / LocalDemo123!
+        <div v-if="demoMode" class="mt-4 text-center text-sm text-slate-400">
+          演示账号：{{ demoAccount }} / {{ demoPassword }}
         </div>
       </el-form>
     </div>

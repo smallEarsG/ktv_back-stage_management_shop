@@ -1,9 +1,37 @@
 <script setup>
-import { ref, onMounted, reactive, watch } from 'vue'
+import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/lib/request'
+import { authStorage } from '@/lib/auth-storage'
+import { useUserStore } from '@/stores/user'
+import QRCode from 'qrcode'
 
 const activeTab = ref('store')
+const userStore = useUserStore()
+const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+const storeLoading = ref(false)
+const storeSaving = ref(false)
+const storeProfile = reactive({ storeName: '', contactPhone: '', businessHours: '', address: '' })
+const loadStore = async () => {
+  storeLoading.value = true
+  try {
+    const data = await request.get('/store/config')
+    for (const key of Object.keys(storeProfile)) storeProfile[key] = String(data[key] || '')
+  } finally { storeLoading.value = false }
+}
+const saveStore = async () => {
+  if (storeSaving.value) return
+  if (!storeProfile.storeName.trim() || !storeProfile.contactPhone.trim()) { ElMessage.warning('请填写门店名称和联系电话'); return }
+  storeSaving.value = true
+  try {
+    await request.put('/store/config/profile', { ...storeProfile })
+    ElMessage.success('门店资料已保存'); await loadStore()
+  } finally { storeSaving.value = false }
+}
+const qrVisible = ref(false)
+const qrImage = ref('')
+const qrTarget = ref('')
+const qrRoom = ref('')
 
 const roomLoading = ref(false)
 const roomList = ref([])
@@ -50,7 +78,7 @@ const staffForm = reactive({
 })
 const staffRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+  password: [{ required: true, min: 8, message: '密码至少8位', trigger: 'blur' }],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   phone: [{ required: true, message: '请输入手机号', trigger: 'blur' }]
 }
@@ -70,7 +98,7 @@ const submitStaff = async () => {
   await staffFormRef.value.validate(async (valid) => {
     if (valid) {
       try {
-        const userInfo = localStorage.getItem('userInfo') ? JSON.parse(localStorage.getItem('userInfo')) : {}
+        const userInfo = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
         const storeId = userInfo.storeId || 0
         
         await request.post('/auth/register', {
@@ -126,7 +154,7 @@ const editProfileRules = {
 }
 
 const handleEditProfile = (row) => {
-  const currentUser = localStorage.getItem('userInfo') ? JSON.parse(localStorage.getItem('userInfo')) : {}
+  const currentUser = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
   // Check if target is admin and current user is not admin
   if (row.role === 'admin' && currentUser.role !== 'admin') {
     ElMessage.warning('只有店长可以编辑店长信息')
@@ -136,7 +164,7 @@ const handleEditProfile = (row) => {
   editProfileForm.id = row.id
   editProfileForm.nickname = row.name
   editProfileForm.phone = row.phone
-  editProfileForm.isActive = row.is_active !== 0 && row.is_active !== false // Handle DB variations
+  editProfileForm.isActive = (row.isActive ?? row.is_active) !== 0 && (row.isActive ?? row.is_active) !== false // Handle DB variations
   
   editProfileDialogVisible.value = true
 }
@@ -180,7 +208,7 @@ const availablePermissions = [
 ]
 
 const handlePermissionSet = (row) => {
-  const currentUser = localStorage.getItem('userInfo') ? JSON.parse(localStorage.getItem('userInfo')) : {}
+  const currentUser = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
   if (currentUser.role !== 'admin') {
      ElMessage.warning('只有店长可以设置权限')
      return
@@ -340,17 +368,29 @@ const handleDeleteRoom = (row) => {
     .catch(() => {})
 }
 
-const downloadQr = (row) => {
-  const url = row?.qrCodeUrl
-  if (!url) {
-    ElMessage.warning('该房间暂无二维码地址')
-    return
+const downloadQr = async (row) => {
+  const demo = import.meta.env.VITE_DEMO_MODE === 'true'
+  if (demo) {
+    qrTarget.value = `${location.origin}/demo/customer/?storeCode=${encodeURIComponent(userStore.currentStoreId)}&roomId=${encodeURIComponent(row.roomNumber)}`
+    qrImage.value = await QRCode.toDataURL(qrTarget.value, { width: 360, margin: 2, errorCorrectionLevel: 'M' })
+  } else {
+    const capabilities = await request.get('/payment/capabilities')
+    if (capabilities.miniappCodes) {
+      const code = await request.get(`/rooms/${row.id}/miniapp-code`)
+      qrImage.value = code.image; qrTarget.value = '正式小程序扫码点单入口'
+    } else {
+      const target = row.qrCodeUrl
+      if (!target || !/^https?:\/\//.test(target) || target.includes('ktv.example.com')) { ElMessage.warning('正式小程序尚未发布或启用。可在房间编辑中填写已开通的网页点单入口。'); return }
+      qrTarget.value = target; qrImage.value = await QRCode.toDataURL(target, { width: 360, margin: 2, errorCorrectionLevel: 'M' })
+    }
   }
-  window.open(url, '_blank')
+  qrRoom.value = row.roomNumber
+  qrVisible.value = true
 }
 
 // Initial Load
 onMounted(() => {
+  loadStore()
   // Only load staff if tab is active (or load on tab switch, but simple here)
   if (activeTab.value === 'staff') {
     getStaffList()
@@ -373,23 +413,28 @@ watch(activeTab, (val) => {
 
 <template>
   <el-card>
+    <el-dialog v-model="qrVisible" :title="`${qrRoom} 点单二维码`" width="440px">
+      <img :src="qrImage" alt="点单二维码" class="mx-auto" />
+      <p class="text-xs break-all text-slate-500">{{ qrTarget }}</p>
+      <template #footer><a :href="qrImage" :download="`${qrRoom}-点单二维码.png`"><el-button type="primary">下载二维码</el-button></a></template>
+    </el-dialog>
     <el-tabs v-model="activeTab">
       <el-tab-pane label="门店资料" name="store">
-        <el-alert title="门店资料保存接口尚未接入，以下仅为示例展示。" type="info" :closable="false" /><el-form disabled label-width="120px" class="mt-4 max-w-lg">
+        <el-form v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
           <el-form-item label="门店名称">
-            <el-input model-value="欢乐KTV旗舰店" />
+            <el-input v-model="storeProfile.storeName" maxlength="100" />
           </el-form-item>
           <el-form-item label="联系电话">
-            <el-input model-value="0755-12345678" />
+            <el-input v-model="storeProfile.contactPhone" maxlength="30" />
           </el-form-item>
           <el-form-item label="营业时间">
-            <el-time-picker is-range range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
+            <el-input v-model="storeProfile.businessHours" placeholder="例如 10:00—次日02:00" maxlength="100" />
           </el-form-item>
           <el-form-item label="门店地址">
-            <el-input type="textarea" model-value="深圳市南山区科技园..." />
+            <el-input type="textarea" v-model="storeProfile.address" maxlength="500" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary">保存更改</el-button>
+            <el-button type="primary" :loading="storeSaving" @click="saveStore">保存更改</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>
@@ -422,7 +467,7 @@ watch(activeTab, (val) => {
           </el-table-column>
           <el-table-column label="操作" width="220">
             <template #default="{ row }">
-              <el-button link type="primary" @click="downloadQr(row)">二维码</el-button>
+              <el-button link type="primary" @click="downloadQr(row).catch(() => {})">二维码</el-button>
               <el-button link type="primary" @click="handleEditRoom(row)">编辑</el-button>
               <el-button link type="danger" @click="handleDeleteRoom(row)">删除</el-button>
             </template>
@@ -459,7 +504,7 @@ watch(activeTab, (val) => {
       </el-tab-pane>
       
       <el-tab-pane label="支付配置" name="payment">
-        <el-alert title="线上支付未接入。请由部署人员通过服务端安全配置接入，勿在演示页面输入密钥。" type="warning" show-icon class="mb-4" />
+        <el-alert title="微信收款退款接口已预留，真实商户资料须在服务器配置并启用。此页面不保存支付密钥。" type="warning" show-icon class="mb-4" />
         <el-form disabled label-width="120px" class="max-w-lg">
           <el-form-item label="商户号 (MCHID)">
             <el-input placeholder="请输入微信支付商户号" />
@@ -480,12 +525,12 @@ watch(activeTab, (val) => {
              <el-input v-model="staffQuery.phone" placeholder="手机号" class="w-40" clearable @clear="getStaffList" />
              <el-button type="primary" @click="getStaffList">查询</el-button>
           </div>
-          <el-button type="primary" @click="handleAddStaff">添加员工</el-button>
+          <el-button type="primary" v-if="isAdmin" @click="handleAddStaff">添加员工</el-button>
         </div>
         <el-table :data="staffList" border v-loading="staffLoading">
           <el-table-column prop="username" label="用户名">
             <template #default="{ row }">
-              <el-button link type="primary" @click="handleEditProfile(row)">{{ row.username }}</el-button>
+              <el-button link type="primary" @click="isAdmin && handleEditProfile(row)">{{ row.username }}</el-button>
             </template>
           </el-table-column>
           <el-table-column prop="name" label="姓名" />
@@ -497,8 +542,8 @@ watch(activeTab, (val) => {
           <el-table-column prop="phone" label="手机号" />
           <el-table-column label="操作">
             <template #default="{ row }">
-              <el-button link type="primary" @click="handlePermissionSet(row)" :disabled="row.role === 'admin'">权限设置</el-button>
-              <el-button link type="danger" @click="handleDeleteStaff(row)" :disabled="row.role === 'admin'">删除</el-button>
+              <el-button link type="primary" v-if="isAdmin" @click="handlePermissionSet(row)" :disabled="row.role === 'admin'">权限设置</el-button>
+              <el-button link type="danger" v-if="isAdmin" @click="handleDeleteStaff(row)" :disabled="row.role === 'admin'">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -531,7 +576,7 @@ watch(activeTab, (val) => {
             <el-form-item label="角色" prop="role">
               <el-radio-group v-model="staffForm.role">
                 <el-radio label="staff">员工</el-radio>
-                <el-radio label="admin">店长</el-radio>
+
               </el-radio-group>
             </el-form-item>
           </el-form>
@@ -570,7 +615,7 @@ watch(activeTab, (val) => {
             <el-form-item label="角色">
               <el-radio-group v-model="permissionForm.role">
                 <el-radio label="staff">员工</el-radio>
-                <el-radio label="admin">店长</el-radio>
+
               </el-radio-group>
             </el-form-item>
             <el-form-item label="功能权限">

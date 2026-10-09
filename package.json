@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --ext .js,.vue",
     "lint:fix": "eslint . --ext .js,.vue --fix",
-    "test": "node --test src/lib/*.test.js",
+    "test": "node --test src/lib",
     "check": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "element-plus": "^2.5.0",
     "lucide-vue-next": "^0.511.0",
     "pinia": "^2.1.7",
+    "qrcode": "1.5.4",
     "tailwind-merge": "^3.3.0",
     "vue": "^3.4.15",
     "vue-router": "^4.2.5"
