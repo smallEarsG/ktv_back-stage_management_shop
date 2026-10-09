@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted, computed, reactive } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, watch, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import CashierPaymentDialog from '@/components/CashierPaymentDialog.vue'
 import { Search, Filter } from '@element-plus/icons-vue'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
@@ -26,6 +26,7 @@ const orderDetail = ref(null)
 const statusPending = reactive({})
 const payStatusFilter = ref('all')
 const route = useRoute()
+const router = useRouter()
 const payDialog = ref(false)
 const payOrderId = ref(null)
 const canResume = row => Number(row?.source) === 2 && Number(row?.payMethod) === 1 && Number(row?.status) === 10 && [0, 1].includes(Number(row?.payStatus)) && userStore.hasPermission('pos:view')
@@ -277,19 +278,23 @@ const notSupported = () => {
   ElMessage.warning('该操作后端暂未开放接口')
 }
 
+let detailSequence = 0
 const openOrderDetail = async (row) => {
+  const sequence = ++detailSequence
   showDetailDialog.value = true
   detailLoading.value = true
   orderDetail.value = null
   try {
     const res = await request.get(`/orders/${row.id}`)
+    if (sequence !== detailSequence) return
     orderDetail.value = res
   } catch (e) {
+    if (sequence !== detailSequence) return
     console.error(e)
     ElMessage.error('获取订单详情失败')
     showDetailDialog.value = false
   } finally {
-    detailLoading.value = false
+    if (sequence === detailSequence) detailLoading.value = false
   }
 }
 
@@ -325,6 +330,11 @@ watch(
     applyRouteFilters()
   }
 )
+
+watch(() => route.query.orderId, id => {
+  if (/^[1-9]\d*$/.test(String(id || ''))) openOrderDetail({ id })
+}, { immediate: true })
+onBeforeUnmount(() => { detailSequence++ })
 </script>
 
 <template>
@@ -494,7 +504,8 @@ watch(
       </div>
       <template #footer>
         <div class="flex justify-between items-center w-full">
-          <div></div>
+          <el-button v-if="route.query.from === 'refunds'" @click="router.push({ name: 'Refunds' })">返回退款售后</el-button>
+          <div v-else></div>
           <div class="flex gap-2">
             <el-button v-if="isCreditUnsettled(orderDetail) && userStore.hasPermission('pos:view')" type="warning" :loading="statusPending[orderDetail?.orderId]" @click="settleCash({ ...orderDetail, id: orderDetail.orderId }).then(() => openOrderDetail({ id: orderDetail.orderId })).catch(() => {})">现金结算</el-button>
             <el-button v-if="canResume(orderDetail)" @click="resumePayment(orderDetail)">继续支付 / 查询</el-button>

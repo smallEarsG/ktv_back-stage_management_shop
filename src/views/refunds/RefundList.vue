@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
@@ -8,6 +8,7 @@ import request from '@/lib/request'
 import { dateRangeParams } from '@/lib/date-range'
 
 const route = useRoute()
+const router = useRouter()
 const userStore = useUserStore()
 const returnDialog = ref(false), returnRow = ref(null), returnItems = ref([]), returnRecords = ref([]), receiving = ref(false), received = ref(false), returnRequest = ref('')
 let pollTimer
@@ -25,6 +26,11 @@ const pending = reactive({})
 const form = reactive({ orderId: '', amount: 0.01, reason: '' })
 const labels = { 0: '待处理', 1: '处理中', 2: '退款完成', 3: '失败/已拒绝', 4: '已关闭' }
 const tags = { 0: 'warning', 1: 'warning', 2: 'success', 3: 'danger', 4: 'info' }
+const openRelatedOrder = row => {
+  if (!userStore.hasPermission('order:view')) { ElMessage.warning('您没有查看订单的权限，请联系店长'); return }
+  if (!/^[1-9]\d*$/.test(String(row?.orderId || ''))) { ElMessage.warning('该退款单缺少关联订单，暂无法查看'); return }
+  return router.push({ name: 'Orders', query: { orderId: String(row.orderId), dateScope: 'all', from: 'refunds' } })
+}
 let sequence = 0
 const fetchRefunds = async () => {
   const current = ++sequence
@@ -119,7 +125,12 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
       </template>
       <el-table :data="refunds" v-loading="loading">
         <el-table-column prop="refundNo" label="退款单号" min-width="210" />
-        <el-table-column prop="orderNumber" label="关联订单" min-width="240" />
+        <el-table-column label="关联订单" min-width="240">
+          <template #default="{ row }">
+            <el-button v-if="row.orderId" link type="primary" class="related-order" @click="openRelatedOrder(row)">{{ row.orderNumber || `订单 ${row.orderId}` }}</el-button>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="金额" width="110"><template #default="{ row }">¥ {{ Number(row.amount || 0).toFixed(2) }}</template></el-table-column>
         <el-table-column label="渠道" width="90"><template #default="{ row }">{{ { cash: '现金', demo: '演示', wechat: '微信' }[row.channel] || row.channel }}</template></el-table-column>
         <el-table-column prop="reason" label="原因" min-width="130" />
@@ -163,3 +174,13 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.related-order {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+</style>
