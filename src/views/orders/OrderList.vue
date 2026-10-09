@@ -40,7 +40,16 @@ const statusOptions = [
   { value: '40', label: '配送中' },
   { value: '50', label: '已完成' },
   { value: '91', label: '退款中' },
+  { value: '92', label: '部分退款' },
+  { value: '93', label: '已退款' },
   { value: '90', label: '已取消' }
+]
+
+const payStatusOptions = [
+  { value: 'all', label: '支付全部' },
+  { value: '0', label: '未支付' },
+  { value: '1', label: '支付中' },
+  { value: '2', label: '已支付' }
 ]
 
 const statusLabel = (s) =>
@@ -71,16 +80,18 @@ const statusTagType = (s) => {
 
 const payStatusLabel = (row) => {
   const ps = payStatusCodeOf(row)
+  if (ps === 2) return '已支付'
+  if (Number(row?.status) === 90 || ps === -1) return '已取消'
   if (ps === 0) return '未支付'
   if (ps === 1) return '支付中'
-  if (ps === 2) return '已支付'
-  if (ps === -1) return '已取消'
+  if (ps === 3) return '支付失败'
   return '—'
 }
 
 const payStatusTagType = (row) => {
   const v = payStatusLabel(row)
-  if (v === '未支付' || v === '待支付') return 'warning'
+  if (v === '未支付' || v === '待支付' || v === '支付中') return 'warning'
+  if (v === '支付失败') return 'danger'
   if (v === '支付中') return 'warning'
   if (v === '已支付') return 'success'
   if (v === '已取消') return 'info'
@@ -323,9 +334,7 @@ watch(
       <div class="flex flex-wrap gap-2 items-center">
         <TimeRangePicker v-model="dateRange" allow-all :default-shortcut="route.query.dateScope === 'all' ? 'all' : 'today'" @change="handleDateRangeChange" />
         <el-select v-model="payStatusFilter" class="w-36" placeholder="支付状态">
-          <el-option label="支付全部" value="all" />
-          <el-option label="未支付" value="0" />
-          <el-option label="已支付" value="2" />
+          <el-option v-for="option in payStatusOptions" :key="option.value" :label="option.label" :value="option.value" />
         </el-select>
         <el-input
           v-model="searchQuery"
@@ -338,7 +347,7 @@ watch(
       </div>
     </div>
 
-    <el-radio-group v-model="activeStatus" class="mb-4">
+    <el-radio-group v-model="activeStatus" class="mb-4 flex flex-wrap gap-y-2">
       <el-radio-button v-for="opt in statusOptions" :key="opt.value" :label="opt.value">
         <span :class="opt.value === '20' ? 'text-red-600 font-bold' : opt.value === '91' || opt.value === 'credit_unsettled' ? 'text-orange-600 font-bold' : ''">{{ opt.label }}</span>
       </el-radio-button>
