@@ -1,0 +1,122 @@
+{
+  "release": "orders-20261009-1800",
+  "verifiedAtUtc": "2026-10-09T10:10:23.266015+00:00",
+  "codeCommit": "d229836a2bae32365ec2dc5b551066a59a85d579",
+  "packageSha256": "5aa4dc80a8d20a7f95ab366e0bbaf43b44b8b2f459ac810bc308b8e203c061e6",
+  "changes": [
+    "Cancelled orders show 已取消 for failed/closed, unpaid and paying states; an explicit paid state remains 已支付.",
+    "Non-cancelled payment status 3 shows 支付失败.",
+    "Order status filters include 部分退款 (92) and 已退款 (93).",
+    "Payment filter includes 支付中 (1).",
+    "Status filters can wrap on narrow screens."
+  ],
+  "validation": {
+    "lint": "passed",
+    "merchantTests": 40,
+    "regressionTestsAdded": 4,
+    "demo": {
+      "release": "orders-20261009-1800",
+      "kind": "demo",
+      "passed": 35,
+      "failed": 0,
+      "checks": [
+        "demo access gate accepts login",
+        "public file SHA matches demo/assets/403-BN0feKXN.js",
+        "public file SHA matches demo/assets/browser-JP79f-a9.js",
+        "public file SHA matches demo/assets/CashierPaymentDialog-BKjVFC_s.js",
+        "public file SHA matches demo/assets/Dashboard-BCC37wrc.js",
+        "public file SHA matches demo/assets/Dashboard-bifnvvGj.css",
+        "public file SHA matches demo/assets/dashboard-chart-maiXvdir.js",
+        "public file SHA matches demo/assets/date-range-B75BE191.js",
+        "public file SHA matches demo/assets/date-range-tn0RQdqM.css",
+        "public file SHA matches demo/assets/finance-BIiC6FmK.js",
+        "public file SHA matches demo/assets/finance-C37UZmAv.css",
+        "public file SHA matches demo/assets/FinanceList-CL9KHEqg.js",
+        "public file SHA matches demo/assets/FinanceOverview-C7AddsZi.js",
+        "public file SHA matches demo/assets/FinanceOverview-CkOR0H6f.css",
+        "public file SHA matches demo/assets/index-DhUDAP3V.js",
+        "public file SHA matches demo/assets/index-ejd8yYxv.css",
+        "public file SHA matches demo/assets/inventory-DVxbbunU.js",
+        "public file SHA matches demo/assets/OrderList-C4TBc9FA.js",
+        "public file SHA matches demo/assets/OrderWorkbench-DfEJHcIA.js",
+        "public file SHA matches demo/assets/PosIndex-Cr7HsWOy.js",
+        "public file SHA matches demo/assets/ProductList-Cqpzyl8j.js",
+        "public file SHA matches demo/assets/RefundList-BATWvVdz.js",
+        "public file SHA matches demo/assets/RoomBalanceDialog-B6Wp-e8v.js",
+        "public file SHA matches demo/assets/SettingsIndex-KnU-qxZc.js",
+        "public file SHA matches demo/assets/WarehouseList-U71S3-Bo.js",
+        "public file SHA matches demo/favicon.svg",
+        "public file SHA matches demo/index.html",
+        "deployed order bundle includes payment failure and complete filter labels",
+        "order route serves the new application entry",
+        "cancelled filter returns matching orders and correct total",
+        "cancelled orders retain server failure/closed payment code for frontend display",
+        "partial refund filter returns matching orders and correct total",
+        "full refund filter returns matching orders and correct total",
+        "paying filter returns only payment status 1",
+        "filtered pagination respects page and consistent total"
+      ],
+      "businessWrites": 0
+    },
+    "production": {
+      "release": "orders-20261009-1800",
+      "kind": "production",
+      "passed": 29,
+      "failed": 0,
+      "checks": [
+        "public file SHA matches production/assets/403-BzMa5hZt.js",
+        "public file SHA matches production/assets/browser-JP79f-a9.js",
+        "public file SHA matches production/assets/CashierPaymentDialog-mXh935Xz.js",
+        "public file SHA matches production/assets/Dashboard-bifnvvGj.css",
+        "public file SHA matches production/assets/dashboard-chart-maiXvdir.js",
+        "public file SHA matches production/assets/Dashboard-DaOn1Hs_.js",
+        "public file SHA matches production/assets/date-range-LopDMrT3.js",
+        "public file SHA matches production/assets/date-range-tn0RQdqM.css",
+        "public file SHA matches production/assets/finance-ByDE9Bhn.js",
+        "public file SHA matches production/assets/finance-C37UZmAv.css",
+        "public file SHA matches production/assets/FinanceList-Cc236WBn.js",
+        "public file SHA matches production/assets/FinanceOverview-CkOR0H6f.css",
+        "public file SHA matches production/assets/FinanceOverview-DfLIltBy.js",
+        "public file SHA matches production/assets/index-DRIf6kc7.js",
+        "public file SHA matches production/assets/index-ejd8yYxv.css",
+        "public file SHA matches production/assets/inventory-DVxbbunU.js",
+        "public file SHA matches production/assets/OrderList-DhaHQHAW.js",
+        "public file SHA matches production/assets/OrderWorkbench-BprfksXG.js",
+        "public file SHA matches production/assets/PosIndex-DC3pc9Bo.js",
+        "public file SHA matches production/assets/ProductList-CxVqh1N0.js",
+        "public file SHA matches production/assets/RefundList-BeGUs307.js",
+        "public file SHA matches production/assets/RoomBalanceDialog-DOHjPOld.js",
+        "public file SHA matches production/assets/SettingsIndex-B6BpVhZ4.js",
+        "public file SHA matches production/assets/WarehouseList-CyCKX8bI.js",
+        "public file SHA matches production/favicon.svg",
+        "public file SHA matches production/index.html",
+        "deployed order bundle includes payment failure and complete filter labels",
+        "order route serves the new application entry",
+        "production backend public API remains healthy"
+      ],
+      "businessWrites": 0
+    },
+    "server": {
+      "environments": {
+        "demo": {
+          "filesVerified": 26,
+          "serviceActive": true
+        },
+        "production": {
+          "filesVerified": 26,
+          "serviceActive": true
+        }
+      },
+      "protectedProgramsAndConfigurationsUnchanged": true,
+      "databasesChanged": false,
+      "backup": "/home/project/order/releases/orders-20261009-1800/backup"
+    },
+    "browser": "Verified deployed demo order page: all six cancelled rows show 已取消 in the payment column; 部分退款 and 已退款 controls are visible; the expanded payment filter includes 支付中. Screenshot saved as orders-fixed.png."
+  },
+  "scope": {
+    "backendChanged": false,
+    "databaseChanged": false,
+    "productionBusinessWrites": 0,
+    "inventoryWorkspaceEdits": "Preserved and excluded; builds were produced from the exact code commit archive."
+  }
+}
