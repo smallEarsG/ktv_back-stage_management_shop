@@ -76,6 +76,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function hasPermission(permission) {
+    if (Array.isArray(permission)) return permission.some(hasPermission)
     // Admin has full access
     if (userInfo.value?.role === 'admin') return true
     

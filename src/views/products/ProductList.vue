@@ -6,6 +6,8 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { inventorySummary } from '@/lib/inventory'
 import request from '@/lib/request'
+import DiningProductRules from '@/components/DiningProductRules.vue'
+const diningRuleVisible = ref(false), diningRuleProduct = ref(null)
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -822,11 +824,12 @@ onMounted(() => {
             <el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" @change="active => changeProductStatus(row, active)" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" :width="canManageInventory ? 300 : 200" fixed="right">
+        <el-table-column label="操作" :width="canManageInventory ? 370 : 270" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
             <el-button link type="primary" @click="openProductDetail(row)">详情</el-button>
+            <el-button link type="primary" @click="diningRuleProduct = row; diningRuleVisible = true">点餐设置</el-button>
             <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'inbound')">入库</el-button>
             <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'stocktake')">盘点</el-button>
           </template>
@@ -835,6 +838,7 @@ onMounted(() => {
       <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="mt-4" />
     </el-card>
 
+    <DiningProductRules v-model="diningRuleVisible" :product="diningRuleProduct" />
     <el-dialog v-model="showDetailDialog" title="商品详情" width="720px">
       <div v-if="detailProduct" class="space-y-4">
         <div class="flex gap-4 items-start p-4 rounded border bg-slate-50">

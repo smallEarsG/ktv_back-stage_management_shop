@@ -1,7 +1,7 @@
 import dayjs from 'dayjs'
 import { dateRangeParams } from './date-range.js'
 
-export const paymentMethods = [{ value: 1, label: '扫码' }, { value: 2, label: '现金' }, { value: 3, label: '挂账' }, { value: 0, label: '其他' }]
+export const paymentMethods = [{ value: 1, label: '扫码' }, { value: 2, label: '现金' }, { value: 3, label: '挂账' }, { value: 4, label: '会员钱包' }, { value: 0, label: '其他' }]
 export const numeric = value => Number(value ?? 0) || 0
 export const formatMoney = value => `¥ ${numeric(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 export const formatTime = value => value && dayjs(value).isValid() ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '—'

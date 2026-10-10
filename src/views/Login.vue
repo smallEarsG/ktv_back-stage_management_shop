@@ -27,6 +27,7 @@ const firstAllowedPath = () => {
     { path: '/refunds', permission: 'refund:view' },
     { path: '/finance', permission: 'finance:view' },
     { path: '/warehouse', permission: 'warehouse:view' },
+    { path: '/operations/overview', permission: 'operations:view' },
     { path: '/settings', permission: 'settings:view' }
   ]
   const hit = nav.find(i => userStore.hasPermission(i.permission))

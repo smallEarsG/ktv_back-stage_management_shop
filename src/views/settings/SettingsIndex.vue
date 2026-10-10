@@ -55,7 +55,7 @@ const roomRules = {
   capacity: [{ required: true, message: '请输入容纳人数', trigger: 'blur' }]
 }
 
-const roomTypes = ['小包', '中包', '大包', '散座']
+const roomTypes = ['餐桌', '餐馆包间', '吧台', '小包', '中包', '大包', '散座']
 
 // Staff Management Logic
 const staffList = ref([])
@@ -196,6 +196,11 @@ const permissionForm = reactive({
   permissions: []
 })
 const availablePermissions = [
+  { label: '查看台位营业', value: 'dining:view' },
+  { label: '开台、转台与清台', value: 'dining:manage' },
+  { label: '后厨制作与出餐', value: 'kitchen:operate' },
+  { label: '处理顾客服务请求', value: 'service:operate' },
+  { label: '审核在线售后申请', value: 'refund:approve' },
   { label: '查看看板', value: 'dashboard:view' },
   { label: '收银台', value: 'pos:view' },
   { label: '工作台', value: 'workbench:view' },
@@ -204,6 +209,7 @@ const availablePermissions = [
   { label: '退款管理', value: 'refund:view' },
   { label: '财务管理', value: 'finance:view' },
   { label: '仓库管理', value: 'warehouse:view' },
+  { label: '运营中心', value: 'operations:view' },
   { label: '门店设置', value: 'settings:view' }
 ]
 
@@ -419,6 +425,7 @@ watch(activeTab, (val) => {
       <template #footer><a :href="qrImage" :download="`${qrRoom}-点单二维码.png`"><el-button type="primary">下载二维码</el-button></a></template>
     </el-dialog>
     <el-tabs v-model="activeTab">
+      <el-tab-pane label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
       <el-tab-pane label="门店资料" name="store">
         <el-form v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
           <el-form-item label="门店名称">

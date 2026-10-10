@@ -7,7 +7,7 @@ test('one empty specification raises a warning even when aggregate stock is abun
     { stockQuantity: 0, lowStockThreshold: 10 },
     { stockQuantity: 100, lowStockThreshold: 10 }
   ] })
-  assert.deepEqual(summary, { stock: 100, skuCount: 2, lowCount: 1, threshold: null })
+  assert.deepEqual(summary, { stock: 100, skuCount: 2, lowCount: 1, outCount: 1, threshold: null })
 })
 
 test('a zero threshold disables early warnings while zero stock still shows shortage', () => {

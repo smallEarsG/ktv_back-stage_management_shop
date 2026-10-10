@@ -48,10 +48,42 @@ test('room drafts survive switching and a fresh page instance', async () => {
   finally { reload.stop() }
 })
 
+test('room search and type filters preserve the selected room and its draft', async () => {
+  const page = view('pos/PosIndex.vue', ['loadRooms', 'addCartLine', 'roomKeyword', 'roomType', 'filteredRooms', 'roomTypes', 'selectedRoom', 'cartItems'], {
+    get: async () => ({ list: [{ ...roomA, type: '小包' }, { ...roomB, type: '大包' }, { id: 3, roomNumber: 'B2', type: '小包', isAvailable: true }] })
+  })
+  try {
+    await page.loadRooms(); page.addCartLine(line)
+    page.roomKeyword.value = ' b '; page.roomType.value = '小包'
+    assert.equal(page.filteredRooms.value.length, 1); assert.equal(page.filteredRooms.value[0].roomNumber, 'B2')
+    assert.equal(page.selectedRoom.value.roomNumber, 'A'); assert.equal(page.cartItems.value[0].qty, 1)
+    page.roomType.value = ''; assert.equal(page.filteredRooms.value.length, 2)
+    page.roomKeyword.value = ''; assert.equal(page.filteredRooms.value.length, 3)
+    assert.deepEqual([...page.roomTypes.value], ['小包', '大包'])
+  } finally { page.stop() }
+})
+
+test('cash shortcuts cannot underpay or submit, and changing tender resets receipt confirmation', async () => {
+  const writes = []
+  const page = view('pos/PosIndex.vue', ['loadRooms', 'addCartLine', 'openCashConfirmation', 'selectCashReceived', 'cashReceived', 'cashConfirmed', 'changeAmount', 'confirmCashOrder'], {
+    get, post: async (path, body) => { writes.push({ path, body }); return path === '/cashier/quote' ? { amountTotal: 68.4 } : { orderId: 8, amountTotal: 68.4, status: 50, payStatus: 2, payMethod: 2 } }
+  })
+  try {
+    await page.loadRooms(); page.addCartLine({ ...line, price: 68.4 }); await page.openCashConfirmation()
+    page.selectCashReceived(50); assert.equal(page.cashReceived.value, undefined)
+    page.selectCashReceived(100); assert.equal(page.changeAmount.value, 31.6)
+    page.cashConfirmed.value = true; page.selectCashReceived(68.4)
+    assert.equal(page.changeAmount.value, 0); assert.equal(page.cashConfirmed.value, false)
+    await page.confirmCashOrder(); assert.equal(writes.length, 1, 'Quick amounts never create or confirm an order')
+    page.cashConfirmed.value = true; await page.confirmCashOrder()
+    assert.equal(writes[1].body.cashReceived, 68.4); assert.equal(writes[1].body.expectedAmount, 68.4)
+  } finally { page.stop() }
+})
+
 test('lost response is persisted, locks cart and retries the original body after reload', async () => {
   const saved = storage(), writes = []
   const names = ['loadRooms', 'addCartLine', 'cartItems', 'createCashierOrder', 'pendingSubmission', 'recoverSubmission', 'incQty']
-  const request = { get: async path => path === '/orders/by-client-no' ? null : get(path), post: async (path, body) => { writes.push(JSON.parse(JSON.stringify(body))); throw new Error('connection lost') } }
+  const request = { get: async path => path === '/orders/by-client-no' ? null : get(path), post: async (path, body) => { if (path === '/cashier/quote') return { amountTotal: 12 }; writes.push(JSON.parse(JSON.stringify(body))); throw new Error('connection lost') } }
   const first = view('pos/PosIndex.vue', names, request, saved)
   await first.loadRooms(); first.addCartLine(line); await first.createCashierOrder(3)
   const originalId = first.pendingSubmission.value.clientOrderNo
@@ -96,10 +128,11 @@ test('a late creation response after leaving the page cannot overwrite newer sav
   const saved = storage()
   let respond
   const page = view('pos/PosIndex.vue', ['loadRooms', 'addCartLine', 'createCashierOrder'], {
-    get, post: () => new Promise(resolve => { respond = resolve })
+    get, post: path => path === '/cashier/quote' ? Promise.resolve({ amountTotal: 12 }) : new Promise(resolve => { respond = resolve })
   }, saved)
   await page.loadRooms(); page.addCartLine(line)
   const inFlight = page.createCashierOrder(3)
+  await new Promise(resolve => setImmediate(resolve))
   page.stop()
   workspace.writeCashierWorkspace(saved, workspace.cashierWorkspaceKey(1, 3), { A: [{ ...line, qty: 2 }] }, null)
   respond({ orderId: 9, orderNo: 'LATE', amountTotal: 12, payMethod: 3, payStatus: 0, status: 20 })

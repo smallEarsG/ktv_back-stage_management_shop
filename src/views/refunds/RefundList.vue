@@ -55,10 +55,12 @@ const submit = async () => {
 const audit = async (row, action) => {
   if (pending[row.id]) return
   const cash = row.channel === 'cash'
+  const wallet = row.channel === 'wallet'
   const text = action === 'reject' ? '确认拒绝此退款申请？'
     : cash ? '请确认已经线下退还现金，再登记退款完成。系统不会自动支付现金。'
+    : wallet ? '退款将按原扣款构成退回会员钱包的本金与赠金，确认继续？'
     : import.meta.env.VITE_DEMO_MODE === 'true' ? '本次仅在演示环境记录退款，不退回真实资金。确认继续？' : wechatEnabled.value ? '将向微信提交原路退款申请，只有渠道确认成功后才登记为完成。确认继续？' : '微信渠道尚未配置，暂不能执行退款。'
-  if (action === 'approve' && !cash && import.meta.env.VITE_DEMO_MODE !== 'true' && !wechatEnabled.value) { ElMessage.warning(text); return }
+  if (action === 'approve' && !cash && !wallet && import.meta.env.VITE_DEMO_MODE !== 'true' && !wechatEnabled.value) { ElMessage.warning(text); return }
   await ElMessageBox.confirm(text, '退款确认', { type: 'warning' })
   pending[row.id] = true
   try { await request.post(`/refunds/${row.id}/audit`, { action, cashReturned: cash && action === 'approve' }); ElMessage.success('处理完成'); await fetchRefunds() }
@@ -132,7 +134,7 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
           </template>
         </el-table-column>
         <el-table-column label="金额" width="110"><template #default="{ row }">¥ {{ Number(row.amount || 0).toFixed(2) }}</template></el-table-column>
-        <el-table-column label="渠道" width="90"><template #default="{ row }">{{ { cash: '现金', demo: '演示', wechat: '微信' }[row.channel] || row.channel }}</template></el-table-column>
+        <el-table-column label="渠道" width="90"><template #default="{ row }">{{ { cash: '现金', demo: '演示', wechat: '微信', wallet: '会员钱包' }[row.channel] || row.channel }}</template></el-table-column>
         <el-table-column prop="reason" label="原因" min-width="130" />
         <el-table-column label="渠道提示" min-width="240"><template #default="{ row }"><span :class="row.channelInfo?.channelStatus === 'ABNORMAL' ? 'text-red-600' : 'text-slate-500'">{{ row.channelInfo?.channelMessage || (Number(row.status) === 1 ? '系统会自动查询，暂未确认退款完成' : '—') }}</span></template></el-table-column>
         <el-table-column prop="createdAt" label="申请时间" min-width="170" />

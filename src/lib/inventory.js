@@ -11,6 +11,7 @@ export function inventorySummary(product) {
     stock: items.reduce((sum, item) => sum + item.stock, 0),
     skuCount: items.length,
     lowCount: items.filter(item => item.low).length,
+    outCount: items.filter(item => item.stock === 0).length,
     threshold: items.length === 1 ? items[0].threshold : null
   }
 }

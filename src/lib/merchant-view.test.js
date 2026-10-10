@@ -174,3 +174,103 @@ test('a stocktake conflict keeps the dialog open and refreshes its baseline befo
     assert.equal(page.showDialog.value, false)
   } finally { page.stop() }
 })
+
+test('warehouse search sends status before pagination and keeps the applied keyword while paging', async () => {
+  const reads = []
+  const page = view('warehouse/WarehouseList.vue', ['inventoryPage', 'searchQuery', 'stockStatus', 'searchInventory', 'fetchInventory', 'inventoryTotal', 'stockItems'], {
+    get: async (path, config) => {
+      reads.push({ path, params: { ...config.params } })
+      return { total: 21, list: [{ ...product, skus: [{ ...product.skus[0], stockQuantity: 0 }, product.skus[1]] }] }
+    }
+  })
+  try {
+    page.inventoryPage.value = 3
+    page.searchQuery.value = ' 饮品 '
+    page.stockStatus.value = 'out'
+    await page.searchInventory()
+    assert.equal(reads[0].path, '/warehouse/inventory')
+    assert.deepEqual(reads[0].params, { page: 1, pageSize: 20, keyword: '饮品', stockStatus: 'out' })
+    assert.equal(page.inventoryTotal.value, 21, 'Server total is retained, not recomputed from this page')
+    assert.equal(page.stockItems.value[0].outCount, 1)
+    assert.equal(page.stockItems.value[0].current, 500)
+    page.searchQuery.value = '未提交的关键词'
+    page.inventoryPage.value = 2
+    await page.fetchInventory()
+    assert.equal(reads[1].params.keyword, '饮品')
+    assert.equal(reads[1].params.page, 2)
+  } finally { page.stop() }
+})
+
+test('warehouse previews inventory changes for the selected SKU and hides invalid results', async () => {
+  const page = view('warehouse/WarehouseList.vue', ['handleAction', 'form', 'stockPreview', 'submitLabel', 'canSubmit'], {
+    get: async () => structuredClone(product)
+  })
+  try {
+    await page.handleAction('inbound', product, 3)
+    page.form.quantity = 10
+    assert.deepEqual({ ...page.stockPreview.value }, { before: 500, after: 510, change: 10 })
+    assert.equal(page.submitLabel.value, '确认入库')
+    await page.handleAction('outbound', product, 2)
+    page.form.quantity = 90
+    assert.deepEqual({ ...page.stockPreview.value }, { before: 494, after: 404, change: -90 })
+    page.form.quantity = 495
+    assert.equal(page.stockPreview.value.after, null, 'Invalid quantities never preview negative inventory')
+    page.form.quantity = undefined
+    assert.equal(page.stockPreview.value.after, null)
+    await page.handleAction('threshold', product, 2)
+    assert.equal(page.stockPreview.value, null)
+    assert.equal(page.submitLabel.value, '保存预警')
+  } finally { page.stop() }
+})
+
+test('warehouse refresh returns to the last available page after replenishment removes filtered rows', async () => {
+  const pages = []
+  const page = view('warehouse/WarehouseList.vue', ['fetchInventory', 'inventoryPage', 'stockItems'], {
+    get: async (path, config) => {
+      pages.push(config.params.page)
+      return { total: 20, list: config.params.page === 1 ? [product] : [] }
+    }
+  })
+  try {
+    page.inventoryPage.value = 2
+    await page.fetchInventory()
+    assert.deepEqual(pages, [2, 1])
+    assert.equal(page.inventoryPage.value, 1)
+    assert.equal(page.stockItems.value[0].id, product.id)
+  } finally { page.stop() }
+})
+
+test('warehouse history keeps the latest SKU filter when earlier requests finish late', async () => {
+  const pending = []
+  const page = view('warehouse/WarehouseList.vue', ['openHistory', 'historyQuery', 'fetchHistory', 'historyList', 'historyLoading'], {
+    get: (path, config) => new Promise(resolve => pending.push({ resolve, skuId: config.params.skuId }))
+  })
+  try {
+    page.openHistory(product, 2)
+    assert.equal(pending[0].skuId, 2)
+    page.historyQuery.skuId = 3
+    const latest = page.fetchHistory()
+    pending[1].resolve({ list: [{ skuId: 3 }], total: 1 })
+    await latest
+    pending[0].resolve({ list: [{ skuId: 2 }], total: 1 })
+    await Promise.resolve()
+    assert.equal(page.historyList.value[0].skuId, 3)
+    assert.equal(page.historyLoading.value, false)
+  } finally { page.stop() }
+})
+
+test('reopening an operation on another SKU cannot be undone by an older product load', async () => {
+  const pending = []
+  const page = view('warehouse/WarehouseList.vue', ['handleAction', 'form'], {
+    get: () => new Promise(resolve => pending.push(resolve))
+  })
+  try {
+    const earlier = page.handleAction('inbound', product, 2)
+    const latest = page.handleAction('inbound', product, 3)
+    pending[1](structuredClone(product))
+    await latest
+    pending[0](structuredClone(product))
+    await earlier
+    assert.equal(page.form.skuId, 3)
+  } finally { page.stop() }
+})

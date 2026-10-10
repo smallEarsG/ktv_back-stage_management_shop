@@ -23,6 +23,18 @@ const router = createRouter({
       component: AppLayout,
       redirect: '/workbench',
       children: [
+        ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({
+          path: `dining/${tab}`, name: `Dining-${tab}`,
+          component: () => import('@/views/dining/DiningConsole.vue'),
+          meta: { title: { seats: '台位营业', kitchen: '后厨出餐', services: '服务与售后', prints: '出餐小票', shifts: '收银交班', settings: '点餐场景' }[tab], requiresAuth: true, permission: { seats: 'dining:view', kitchen: 'kitchen:operate', services: ['service:operate', 'refund:view', 'refund:approve'], prints: 'kitchen:operate', shifts: 'pos:view', settings: 'settings:view' }[tab], diningTab: tab }
+        })),
+        ...['overview', 'members', 'wallet', 'coupons', 'activities'].map(tab => ({
+          path: `operations/${tab}`,
+          name: `Operations-${tab}`,
+          component: () => import('@/views/operations/OperationsCenter.vue'),
+          meta: { title: '运营中心', requiresAuth: true, permission: 'operations:view', operationTab: tab }
+        })),
+        { path: 'operations', redirect: '/operations/overview' },
         {
           path: 'dashboard',
           name: 'Dashboard',
