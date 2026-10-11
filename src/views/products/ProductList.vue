@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, reactive, computed } from 'vue'
 import { Plus, Edit, Delete, MoreFilled, Search } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -13,6 +13,9 @@ const router = useRouter()
 const userStore = useUserStore()
 const canManageInventory = computed(() => userStore.hasPermission('warehouse:view'))
 const goToWarehouse = (row, action) => router.push({ path: '/warehouse', query: { productId: String(row.id), action } })
+const mobileProductLayout = ref(false)
+let productMediaQuery
+const updateProductLayout = () => { mobileProductLayout.value = productMediaQuery.matches }
 
 const activeCategory = ref('')
 const showEditDialog = ref(false)
@@ -703,29 +706,34 @@ const removeAttrOption = (i, oi) => {
 
 
 onMounted(() => {
+  productMediaQuery = window.matchMedia('(max-width: 750px)')
+  updateProductLayout()
+  productMediaQuery.addEventListener('change', updateProductLayout)
+  onBeforeUnmount(() => productMediaQuery.removeEventListener('change', updateProductLayout))
   fetchCategories()
 })
 </script>
 
 <template>
-  <div class="flex gap-4 h-full">
+  <div class="product-page flex gap-4 h-full">
     <!-- Category Sidebar (Simplified as Card) -->
-    <el-card class="flex-shrink-0 w-56" :body-style="{ padding: '0' }">
-      <div class="flex justify-between items-center p-4 font-bold border-b bg-slate-50">
+    <el-card class="product-category-card flex-shrink-0 w-56" :body-style="{ padding: '0' }">
+      <div class="product-category-heading flex justify-between items-center p-4 font-bold border-b bg-slate-50">
         <span>商品分类</span>
-        <el-button link type="primary" :icon="Plus" size="small" @click="handleOpenAddCategory"></el-button>
+        <el-button link type="primary" :icon="Plus" size="small" aria-label="新增商品分类" @click="handleOpenAddCategory"></el-button>
       </div>
-      <el-menu :default-active="activeCategory" class="border-none" @select="onSelectCategory">
+      <el-menu :default-active="activeCategory" class="product-category-menu border-none" @select="onSelectCategory">
         <el-menu-item :index="allCategoryId">全部</el-menu-item>
         <el-menu-item v-for="cat in categories" :key="cat.id" :index="cat.id.toString()" class="flex justify-between items-center pr-2 group">
-         {{cat.name }} 
-          <div class="flex gap-1 items-center">
+          <span class="product-category-name" :title="cat.name">{{ cat.name }}</span>
+          <div class="product-category-actions flex gap-1 items-center">
             <el-button 
               link 
               type="primary" 
               :icon="Edit" 
               size="small" 
               class="opacity-0 transition-opacity group-hover:opacity-100"
+              :aria-label="`编辑分类${cat.name}`"
               @click.stop="handleEditCategory(cat)"
             ></el-button>
           <el-button 
@@ -734,6 +742,7 @@ onMounted(() => {
             :icon="Delete" 
             size="small" 
             class="opacity-0 transition-opacity group-hover:opacity-100"
+            :aria-label="`删除分类${cat.name}`"
             @click.stop="handleDeleteCategory(cat.id, cat.name)"
           ></el-button>
           </div>
@@ -742,15 +751,15 @@ onMounted(() => {
     </el-card>
 
     <!-- Product List -->
-    <el-card class="flex-1 min-w-0">
+    <el-card class="product-list-card flex-1 min-w-0">
       <template #header>
-        <div class="flex justify-between items-center">
+        <div class="product-heading flex justify-between items-center">
           <span class="font-bold">商品列表</span>
-          <div class="flex gap-2 items-center">
+          <div class="product-toolbar flex gap-2 items-center">
             <el-input
               v-model="queryParams.keyword"
               placeholder="搜索商品"
-              class="w-64"
+              class="product-search w-64"
               clearable
               :prefix-icon="Search"
               @keyup.enter="filterProducts"
@@ -761,7 +770,8 @@ onMounted(() => {
         </div>
       </template>
 
-      <el-table :data="products" style="width: 100%" v-loading="loading" size="small" :row-class-name="getRowClass" :row-key="row => row.id || row.productId || row.code || row.name">
+      <p class="product-mobile-hint">左右滑动查看商品详情，右侧可打开商品操作。</p>
+      <el-table class="product-table" :data="products" style="width: 100%" v-loading="loading" size="small" :row-class-name="getRowClass" :row-key="row => row.id || row.productId || row.code || row.name">
         <el-table-column prop="image" label="图片" width="80">
           <template #default="{ row }">
              <el-image :src="row.image" class="w-10 h-10 rounded bg-slate-200" fit="cover">
@@ -824,18 +834,33 @@ onMounted(() => {
             <el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" @change="active => changeProductStatus(row, active)" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" :width="canManageInventory ? 370 : 270" fixed="right">
+        <el-table-column label="操作" :width="mobileProductLayout ? 88 : canManageInventory ? 370 : 270" fixed="right">
           <template #default="{ row }">
+            <div class="product-row-actions">
             <el-button link type="primary" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
             <el-button link type="primary" @click="openProductDetail(row)">详情</el-button>
             <el-button link type="primary" @click="diningRuleProduct = row; diningRuleVisible = true">点餐设置</el-button>
             <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'inbound')">入库</el-button>
             <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'stocktake')">盘点</el-button>
+            </div>
+            <el-dropdown class="product-mobile-actions" trigger="click">
+              <el-button link type="primary" :icon="MoreFilled" :aria-label="`操作商品${row.name}`">操作</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="handleEdit(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item @click="openProductDetail(row)">详情</el-dropdown-item>
+                  <el-dropdown-item @click="diningRuleProduct = row; diningRuleVisible = true">点餐设置</el-dropdown-item>
+                  <el-dropdown-item v-if="canManageInventory" @click="goToWarehouse(row, 'inbound')">入库</el-dropdown-item>
+                  <el-dropdown-item v-if="canManageInventory" @click="goToWarehouse(row, 'stocktake')">盘点</el-dropdown-item>
+                  <el-dropdown-item divided @click="handleDelete(row)">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
-      <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="mt-4" />
+      <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :pager-count="mobileProductLayout ? 5 : 7" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="product-pagination mt-4" />
     </el-card>
 
     <DiningProductRules v-model="diningRuleVisible" :product="diningRuleProduct" />
@@ -1082,3 +1107,106 @@ onMounted(() => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.product-mobile-hint,
+.product-mobile-actions {
+  display: none;
+}
+
+@media (max-width: 750px) {
+  .product-page {
+    flex-direction: column;
+    height: auto;
+    gap: 12px;
+    min-width: 0;
+  }
+  .product-category-card,
+  .product-list-card {
+    width: 100%;
+    flex: none;
+    min-width: 0;
+  }
+  .product-category-heading {
+    padding: 8px 12px;
+  }
+  .product-category-heading :deep(.el-button) {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  .product-category-menu {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+  .product-category-menu :deep(.el-menu-item) {
+    flex: 0 0 auto;
+    height: 48px;
+    padding: 0 12px !important;
+    gap: 8px;
+  }
+  .product-category-name {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .product-category-actions :deep(.el-button) {
+    opacity: 1;
+    min-width: 28px;
+    min-height: 32px;
+    margin: 0;
+  }
+  .product-list-card :deep(.el-card__header),
+  .product-list-card :deep(.el-card__body) {
+    padding: 12px;
+  }
+  .product-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .product-toolbar {
+    width: 100%;
+    min-width: 0;
+  }
+  .product-search {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+  }
+  .product-toolbar > :deep(.el-button) {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 8px 10px;
+  }
+  .product-mobile-hint {
+    display: block;
+    margin: 0 0 8px;
+    color: #64748b;
+    font-size: 12px;
+  }
+  .product-row-actions {
+    display: none;
+  }
+  .product-mobile-actions {
+    display: inline-flex;
+  }
+  .product-mobile-actions :deep(.el-button) {
+    min-height: 36px;
+    white-space: nowrap;
+  }
+  .product-table :deep(.el-scrollbar__wrap) {
+    overscroll-behavior-x: contain;
+  }
+  .product-pagination {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px 0;
+  }
+  .product-pagination :deep(.el-pagination__sizes) {
+    margin-right: 0;
+  }
+}
+</style>
