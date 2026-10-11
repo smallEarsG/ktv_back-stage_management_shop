@@ -8,6 +8,7 @@ import request from '@/lib/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { dateRangeParams } from '@/lib/date-range'
+import { formatOrderAttributes, orderItemProgressText } from '@/lib/order-attributes'
 import { useUserStore } from '@/stores/user'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
@@ -158,28 +159,10 @@ const formatTime = (val) => {
 
 const specsText = (rowOrItem) => {
   const raw = rowOrItem?.skuSpecs ?? rowOrItem?.sku_specs ?? rowOrItem?.specs
-  if (!raw) return '—'
-  try {
-    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-      const txt = Object.values(obj).join(' / ')
-      return txt || '—'
-    }
-    return String(raw)
-  } catch {
-    return String(raw)
-  }
+  return formatOrderAttributes(raw, { labels: false }) || '—'
 }
 
-const selectedAttrsText = (item) => {
-  const obj = item?.selectedAttrs
-  if (!obj || typeof obj !== 'object') return '—'
-  const entries = Object.entries(obj)
-  if (!entries.length) return '—'
-  return entries
-    .map(([k, v]) => `${k}:${Array.isArray(v) ? v.join('/') : v}`)
-    .join('，')
-}
+const selectedAttrsText = item => formatOrderAttributes(item?.selectedAttrs ?? item?.selectedAttrsJson) || '—'
 
 const isWaitingStatus = (status) => [10, 20, 30, 40].includes(Number(status))
 
@@ -470,12 +453,16 @@ onBeforeUnmount(() => { detailSequence++ })
             <el-descriptions-item label="支付时间">{{ formatTime(orderDetail.paidAt) }}</el-descriptions-item>
             <el-descriptions-item label="取消时间">{{ formatTime(orderDetail.canceledAt) }}</el-descriptions-item>
             <el-descriptions-item label="完成时间">{{ formatTime(orderDetail.completedAt) }}</el-descriptions-item>
+            <el-descriptions-item v-if="orderDetail.dining?.note" label="整单备注" :span="3"><span class="whitespace-pre-wrap break-words">{{ orderDetail.dining.note }}</span></el-descriptions-item>
           </el-descriptions>
 
           <div class="mt-4">
             <div class="mb-2 font-bold text-slate-800">商品明细</div>
+            <p class="mb-2 text-xs text-slate-500">退款数量和退菜数量分别记录；仅金额退款不会停止制作。</p>
             <el-table :data="orderDetail.items || []" border stripe size="small">
-              <el-table-column prop="name" label="商品" min-width="180" />
+              <el-table-column label="商品 / 单品备注" min-width="220">
+                <template #default="{ row: it }"><div>{{ it.name }}</div><p v-if="it.note" class="mt-1 text-xs text-amber-700 whitespace-pre-wrap break-words">单品备注：{{ it.note }}</p></template>
+              </el-table-column>
               <el-table-column label="SKU" width="120">
                 <template #default="{ row: it }">
                   <el-tag v-if="it.skuCode" size="small" effect="plain">{{ it.skuCode }}</el-tag>
@@ -492,6 +479,9 @@ onBeforeUnmount(() => { detailSequence++ })
                 <template #default="{ row: it }">¥ {{ Number(it.unitPrice || 0).toFixed(2) }}</template>
               </el-table-column>
               <el-table-column prop="qty" label="数量" width="80" align="right" />
+              <el-table-column label="制作 / 售后份数" min-width="230">
+                <template #default="{ row: it }"><span class="text-xs leading-relaxed whitespace-pre-wrap break-words">{{ orderItemProgressText(it) || '—' }}</span></template>
+              </el-table-column>
               <el-table-column prop="lineAmount" label="小计" width="110" align="right">
                 <template #default="{ row: it }">¥ {{ Number(it.lineAmount || 0).toFixed(2) }}</template>
               </el-table-column>

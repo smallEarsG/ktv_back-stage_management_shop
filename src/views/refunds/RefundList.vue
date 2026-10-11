@@ -6,6 +6,7 @@ import { useUserStore } from '@/stores/user'
 import TimeRangePicker from '@/components/TimeRangePicker.vue'
 import request from '@/lib/request'
 import { dateRangeParams } from '@/lib/date-range'
+import { formatOrderAttributes } from '@/lib/order-attributes'
 
 const route = useRoute()
 const router = useRouter()
@@ -107,9 +108,7 @@ const retryWechat = async row => {
   try { await request.post(`/refunds/${row.id}/wechat-retry`); await fetchRefunds() }
   finally { pending[row.id] = false }
 }
-const attributesText = raw => {
-  try { const attrs = typeof raw === 'string' ? JSON.parse(raw) : raw; return Object.entries(attrs || {}).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join('/') : value}`).join(' / ') } catch { return '' }
-}
+const attributesText = raw => formatOrderAttributes(raw)
 const openReturns = async row => {
   const detail = await request.get(`/refunds/${row.id}/returns`)
   returnRow.value = row; returnItems.value = (detail.items || []).map(item => ({ ...item, quantity: 0 }))

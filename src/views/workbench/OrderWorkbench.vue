@@ -5,6 +5,7 @@ import { Bell, BellFilled, CircleCheck, Clock, Refresh, Search, Warning } from '
 import request from '@/lib/request'
 import { nextOrderStatus } from '@/lib/order-flow'
 import { createPendingMonitor, roomBalancesById } from '@/lib/cashier-workspace'
+import { formatOrderAttributes, orderItemProgressText } from '@/lib/order-attributes'
 import RoomBalanceDialog from '@/components/RoomBalanceDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -373,26 +374,10 @@ const updateStatus = async (rowOrDetail) => {
 
 const specsText = (rowOrItem) => {
   const raw = rowOrItem?.skuSpecs ?? rowOrItem?.sku_specs ?? rowOrItem?.specs
-  if (!raw) return '—'
-  try {
-    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-      const txt = Object.values(obj).join(' / ')
-      return txt || '—'
-    }
-    return String(raw)
-  } catch {
-    return String(raw)
-  }
+  return formatOrderAttributes(raw, { labels: false }) || '—'
 }
 
-const selectedAttrsText = (item) => {
-  const obj = item?.selectedAttrs
-  if (!obj || typeof obj !== 'object') return '—'
-  const entries = Object.entries(obj)
-  if (!entries.length) return '—'
-  return entries.map(([k, v]) => `${k}:${Array.isArray(v) ? v.join('/') : v}`).join('，')
-}
+const selectedAttrsText = item => formatOrderAttributes(item?.selectedAttrs ?? item?.selectedAttrsJson) || '—'
 
 onMounted(async () => {
   await Promise.all([fetchOrders(), refreshRooms(), refreshSummary()])
@@ -534,11 +519,15 @@ onBeforeUnmount(() => {
 
           <section class="detail-section">
             <h4>商品明细 <span>{{ (orderDetail.items || []).length }} 种</span></h4>
+            <p v-if="orderDetail.dining?.note" class="detail-order-note">整单备注：{{ orderDetail.dining.note }}</p>
+            <p class="detail-progress-hint">退款数量和退菜数量分别记录；仅金额退款不会停止制作。</p>
             <div v-for="(item, idx) in orderDetail.items || []" :key="item.id || idx" class="detail-product">
               <div class="detail-product-copy">
                 <strong>{{ item.name }}</strong>
                 <p v-if="specsText(item) !== '—'">规格：{{ specsText(item) }}</p>
                 <p v-if="selectedAttrsText(item) !== '—'">已选属性：{{ selectedAttrsText(item) }}</p>
+                <p v-if="item.note" class="detail-item-note">单品备注：{{ item.note }}</p>
+                <p v-if="orderItemProgressText(item)" class="detail-item-progress">{{ orderItemProgressText(item) }}</p>
                 <span v-if="item.skuCode" class="sku-code">SKU：{{ item.skuCode }}</span>
               </div>
               <strong class="detail-quantity">× {{ item.qty }}</strong>
@@ -661,6 +650,8 @@ onBeforeUnmount(() => {
 .detail-product-copy { min-width: 0; overflow-wrap: anywhere; }
 .detail-product-copy > strong { color: #334155; font-size: 14px; }
 .detail-product-copy p { margin-top: 5px; color: #64748b; font-size: 12px; }
+.detail-product-copy .detail-item-note, .detail-order-note { color: #92400e; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-product-copy .detail-item-progress, .detail-progress-hint { color: #475569; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .sku-code { display: block; margin-top: 6px; color: #94a3b8; font-size: 11px; }
 .detail-quantity { flex-shrink: 0; color: #334155; font-size: 16px; }
 .detail-times > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; margin-bottom: 12px; font-size: 13px; }

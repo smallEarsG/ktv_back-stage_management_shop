@@ -7,13 +7,14 @@ import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat.js'
 import { dateRangeParams } from './date-range.js'
+import { formatOrderAttributes, orderItemProgressText } from './order-attributes.js'
 
 function orderPage(request = {}, query = {}) {
   const source = fs.readFileSync(new URL('../views/orders/OrderList.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
   const route = reactive({ query })
-  const sandbox = { ref, reactive, computed, watch, dayjs, customParseFormat, dateRangeParams,
+  const sandbox = { ref, reactive, computed, watch, dayjs, customParseFormat, dateRangeParams, formatOrderAttributes, orderItemProgressText,
     onMounted: () => {}, onBeforeUnmount: () => {}, useRoute: () => route, useRouter: () => ({ push: async () => {} }), useUserStore: () => ({ hasPermission: () => true }),
     request, setTimeout, clearTimeout, console: { error: () => {} },
     ElMessage: { error: () => {}, success: () => {}, warning: () => {} }, ElMessageBox: { confirm: async () => {} } }
@@ -21,7 +22,7 @@ function orderPage(request = {}, query = {}) {
   scope.run(() => vm.runInContext(script + `\napi = { payStatusLabel, payStatusTagType, statusOptions,
     paymentFilters: typeof payStatusOptions === 'undefined' ? [] : payStatusOptions,
     activeStatus, payStatusFilter, currentPage, fetchOrders, handleFilter,
-    showDetailDialog, detailLoading, orderDetail, openOrderDetail,
+    showDetailDialog, detailLoading, orderDetail, openOrderDetail, specsText, selectedAttrsText,
     clearFilterTimer: () => clearTimeout(filterTimer) };`, sandbox))
   return { ...sandbox.api, route, stop: () => { scope.stop(); sandbox.api.clearFilterTimer() } }
 }
@@ -135,4 +136,12 @@ test('invalid linked order IDs do not produce detail requests', async () => {
       assert.equal(page.showDetailDialog.value, false)
     } finally { page.stop() }
   }
+})
+
+test('order detail reads historical SKU arrays and selected attribute JSON without object placeholders', () => {
+  const page = orderPage()
+  try {
+    assert.equal(page.specsText({ skuSpecs: '[{"name":"容量","value":"330ml"},{"name":"温度","value":"冰"}]' }), '330ml / 冰')
+    assert.equal(page.selectedAttrsText({ selectedAttrs: '[{"name":"口味","value":["少辣","少盐"]}]' }), '口味：少辣、少盐')
+  } finally { page.stop() }
 })

@@ -7,17 +7,18 @@ import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat.js'
 import { nextOrderStatus } from './order-flow.js'
 import { createPendingMonitor, roomBalancesById } from './cashier-workspace.js'
+import { formatOrderAttributes, orderItemProgressText } from './order-attributes.js'
 
 function workbench(request) {
   const source = fs.readFileSync(new URL('../views/workbench/OrderWorkbench.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), cleanups = []
-  const sandbox = { computed, reactive, ref, watch, dayjs, customParseFormat, nextOrderStatus, createPendingMonitor, roomBalancesById,
+  const sandbox = { computed, reactive, ref, watch, dayjs, customParseFormat, nextOrderStatus, createPendingMonitor, roomBalancesById, formatOrderAttributes, orderItemProgressText,
     request, useRoute: () => ({ query: {} }), useUserStore: () => ({ currentStoreId: 1, userInfo: { id: 3 } }),
     localStorage: { getItem: () => null }, onMounted() {}, onBeforeUnmount: callback => cleanups.push(callback),
     setTimeout, clearTimeout, clearInterval, console }
   vm.createContext(sandbox)
-  scope.run(() => vm.runInContext(script + '\napi = { activeTab, workPage, overtimeOnly, roomFilter, keyword, now, fetchOrders, counts, workTotal, filteredOrders, waitMinutes, isOvertime, showNewOrders, loadError };', sandbox))
+  scope.run(() => vm.runInContext(script + '\napi = { activeTab, workPage, overtimeOnly, roomFilter, keyword, now, fetchOrders, counts, workTotal, filteredOrders, waitMinutes, isOvertime, showNewOrders, loadError, specsText, selectedAttrsText };', sandbox))
   return { ...sandbox.api, stop() { cleanups.forEach(callback => callback()); scope.stop() } }
 }
 
@@ -95,5 +96,13 @@ test('a failed request for an old filter cannot replace the current list or show
     assert.equal(page.loadError.value, '')
     await page.fetchOrders()
     assert.equal(page.filteredOrders.value[0].id, 9)
+  } finally { page.stop() }
+})
+
+test('workbench detail reads historical SKU arrays and selected attribute JSON without object placeholders', () => {
+  const page = workbench({})
+  try {
+    assert.equal(page.specsText({ skuSpecs: '[{"name":"容量","value":"330ml"},{"name":"温度","value":"冰"}]' }), '330ml / 冰')
+    assert.equal(page.selectedAttrsText({ selectedAttrs: '[{"name":"口味","value":["少辣","少盐"]}]' }), '口味：少辣、少盐')
   } finally { page.stop() }
 })
