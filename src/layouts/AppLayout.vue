@@ -36,6 +36,7 @@ const menuItems = [
   ] },
   { path: '/dashboard', icon: Odometer, label: '首页看板', permission: 'dashboard:view' },
   { path: '/pos/index', icon: ShoppingCart, label: '收银台', permission: 'pos:view' },
+  { path: '/group-buy', icon: Tickets, label: '团购核销', permission: 'pos:view' },
   { path: '/workbench', icon: Tickets, label: '工作台', permission: 'workbench:view' },
   { path: '/orders', icon: List, label: '订单管理', permission: 'order:view' },
   { path: '/products', icon: Goods, label: '商品管理', permission: 'product:view' },
