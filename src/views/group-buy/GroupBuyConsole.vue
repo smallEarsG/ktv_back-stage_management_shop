@@ -5,6 +5,7 @@ import { Tickets, Refresh, Search } from '@element-plus/icons-vue'
 import request from '@/lib/request'
 import { useUserStore } from '@/stores/user'
 import { recordState, isUncertain, money, readPending, savePending, clearPending, operationResolved } from '@/lib/group-buy'
+import GroupBuyFulfillmentPanel from './GroupBuyFulfillmentPanel.vue'
 
 const user = useUserStore()
 const channels = ref([]), platform = ref('DOUYIN'), input = ref(''), preparation = ref(null), selectedId = ref('')
@@ -154,10 +155,11 @@ onMounted(async () => { restore(); await Promise.all([load(), loadDemoCapability
         <el-table-column label="顾客实付" width="115"><template #default="{ row }">¥{{ money(row.payAmount) }}</template></el-table-column>
         <el-table-column label="状态" min-width="200"><template #default="{ row }"><el-tag :type="isUncertain(row.state) ? 'warning' : row.state === 'VERIFIED' ? 'success' : 'info'">{{ recordState(row.state) }}</el-tag><div class="muted">{{ row.remoteStatus || row.message }}</div></template></el-table-column>
         <el-table-column label="操作时间" min-width="170"><template #default="{ row }">{{ dateText(row.createdAt) }}<div class="muted">员工 #{{ row.operatorId }}</div></template></el-table-column>
-        <el-table-column label="操作" width="170"><template #default="{ row }"><el-button link type="primary" :disabled="busy" @click="queryRecord(row.id)">查询状态</el-button><el-button v-if="admin && row.state === 'VERIFIED'" link type="danger" :disabled="busy || !!pending || !!recoveryError" @click="cancelRecord(row)">撤销核销</el-button></template></el-table-column>
+        <el-table-column label="操作" width="170"><template #default="{ row }"><el-button v-if="!row.simulation" link type="primary" :disabled="busy" @click="queryRecord(row.id)">查询状态</el-button><el-button v-if="admin && row.state === 'VERIFIED' && !row.fulfillment && !row.simulation" link type="danger" :disabled="busy || !!pending || !!recoveryError" @click="cancelRecord(row)">撤销核销</el-button></template></el-table-column>
       </el-table>
       <div class="pagination"><el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="load" /></div>
     </section>
+    <GroupBuyFulfillmentPanel :records="rows" :demo-enabled="demoEnabled" @refresh="load" />
   </div>
 </template>
 

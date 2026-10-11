@@ -71,7 +71,7 @@ const router = createRouter({
           path: 'refunds',
           name: 'Refunds',
           component: () => import('@/views/refunds/RefundList.vue'),
-          meta: { title: '退款售后', requiresAuth: true, permission: 'refund:view' }
+          meta: { title: '退款售后', requiresAuth: true, permission: ['refund:view', 'refund:approve'] }
         },
         {
           path: 'finance',

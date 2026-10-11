@@ -24,7 +24,7 @@ const firstAllowedPath = () => {
     { path: '/workbench', permission: 'workbench:view' },
     { path: '/orders', permission: 'order:view' },
     { path: '/products', permission: 'product:view' },
-    { path: '/refunds', permission: 'refund:view' },
+    { path: '/refunds', permission: ['refund:view', 'refund:approve'] },
     { path: '/finance', permission: 'finance:view' },
     { path: '/warehouse', permission: 'warehouse:view' },
     { path: '/operations/overview', permission: 'operations:view' },

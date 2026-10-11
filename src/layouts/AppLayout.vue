@@ -40,7 +40,7 @@ const menuItems = [
   { path: '/workbench', icon: Tickets, label: '工作台', permission: 'workbench:view' },
   { path: '/orders', icon: List, label: '订单管理', permission: 'order:view' },
   { path: '/products', icon: Goods, label: '商品管理', permission: 'product:view' },
-  { path: '/refunds', icon: RefreshLeft, label: '退款售后', permission: 'refund:view' },
+  { path: '/refunds', icon: RefreshLeft, label: '退款售后', permission: ['refund:view', 'refund:approve'] },
   { path: '/finance', icon: Money, label: '财务管理', permission: 'finance:view', children: [
     { path: '/finance/overview', label: '财务看板' },
     { path: '/finance/flows', label: '资金流水' }

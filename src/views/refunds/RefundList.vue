@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -10,6 +10,12 @@ import { dateRangeParams } from '@/lib/date-range'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const canApprove = computed(() => userStore.hasPermission('refund:approve'))
+const requireApproval = () => {
+  if (canApprove.value) return true
+  ElMessage.warning('您只有退款查看权限，请联系有退款审批权限的员工处理')
+  return false
+}
 const returnDialog = ref(false), returnRow = ref(null), returnItems = ref([]), returnRecords = ref([]), receiving = ref(false), received = ref(false), returnRequest = ref('')
 let pollTimer
 const wechatEnabled = ref(false)
@@ -46,6 +52,7 @@ const fetchRefunds = async () => {
 }
 const filter = () => { page.value = 1; fetchRefunds() }
 const submit = async () => {
+  if (!requireApproval()) return
   if (saving.value) return
   if (!form.orderId.trim() || !form.reason.trim() || !(form.amount > 0)) { ElMessage.warning('请填写订单号、退款金额和原因'); return }
   saving.value = true
@@ -53,6 +60,7 @@ const submit = async () => {
   finally { saving.value = false }
 }
 const audit = async (row, action) => {
+  if (!requireApproval()) return
   if (pending[row.id]) return
   const cash = row.channel === 'cash'
   const wallet = row.channel === 'wallet'
@@ -73,6 +81,7 @@ const queryWechat = async (row) => {
   finally { pending[row.id] = false }
 }
 const retryWechat = async row => {
+  if (!requireApproval()) return
   if (pending[row.id] || !wechatEnabled.value) return
   await ElMessageBox.confirm('沿用原退款单号查询并重试，金额仍以渠道结果为准。确认继续？', '重试原退款单', { type: 'warning' })
   pending[row.id] = true
@@ -122,7 +131,7 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
             <el-option v-for="(label, code) in labels" :key="code" :label="label" :value="code" />
           </el-select>
           <el-button @click="filter">查询</el-button>
-          <el-button type="primary" @click="dialog = true">申请退款</el-button>
+          <el-button v-if="canApprove" type="primary" @click="dialog = true">申请退款</el-button>
         </div>
       </template>
       <el-table :data="refunds" v-loading="loading">
@@ -140,15 +149,15 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
         <el-table-column prop="createdAt" label="申请时间" min-width="170" />
         <el-table-column label="状态" width="125"><template #default="{ row }"><el-tag :type="tags[Number(row.status)] || 'info'">{{ labels[Number(row.status)] || '未知状态' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" min-width="185"><template #default="{ row }">
-          <template v-if="Number(row.status) === 0">
+          <template v-if="Number(row.status) === 0 && canApprove">
             <el-button size="small" type="success" :loading="pending[row.id]" @click="audit(row, 'approve').catch(() => {})">{{ row.channel === 'cash' ? '登记已退现金' : '同意退款' }}</el-button>
             <el-button size="small" type="danger" :disabled="pending[row.id]" @click="audit(row, 'reject').catch(() => {})">拒绝</el-button>
           </template>
           <template v-else-if="Number(row.status) === 1 && row.channel === 'wechat'">
             <el-button :loading="pending[row.id]" @click="queryWechat(row)">查询渠道状态</el-button>
-            <el-button v-if="wechatEnabled && row.channelInfo?.channelStatus !== 'ABNORMAL'" :disabled="pending[row.id]" @click="retryWechat(row).catch(() => {})">重试原退款单</el-button>
+            <el-button v-if="canApprove && wechatEnabled && row.channelInfo?.channelStatus !== 'ABNORMAL'" :disabled="pending[row.id]" @click="retryWechat(row).catch(() => {})">重试原退款单</el-button>
           </template>
-          <el-button v-else-if="Number(row.status) === 2" size="small" @click="openReturns(row)">退货记录/入库</el-button><span v-else class="text-slate-400">已处理</span>
+          <el-button v-else-if="Number(row.status) === 2" size="small" @click="openReturns(row)">退货记录/入库</el-button><span v-else class="text-slate-400">{{ Number(row.status) === 0 ? '等待有权限员工审批' : '已处理' }}</span>
         </template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="fetchRefunds" class="mt-4" />

@@ -200,7 +200,7 @@ const availablePermissions = [
   { label: '开台、转台与清台', value: 'dining:manage' },
   { label: '后厨制作与出餐', value: 'kitchen:operate' },
   { label: '处理顾客服务请求', value: 'service:operate' },
-  { label: '审核在线售后申请', value: 'refund:approve' },
+  { label: '审批及执行退款', value: 'refund:approve' },
   { label: '查看看板', value: 'dashboard:view' },
   { label: '收银台', value: 'pos:view' },
   { label: '工作台', value: 'workbench:view' },
