@@ -17,8 +17,25 @@ const requireApproval = () => {
   return false
 }
 const returnDialog = ref(false), returnRow = ref(null), returnItems = ref([]), returnRecords = ref([]), receiving = ref(false), received = ref(false), returnRequest = ref('')
+const automaticReturn = ref(false)
 let pollTimer
 const wechatEnabled = ref(false)
+const capabilitiesLoading = ref(false), capabilitiesError = ref(''), listError = ref('')
+let disposed = false, capabilitySequence = 0
+async function loadCapabilities() {
+  const current = ++capabilitySequence
+  capabilitiesLoading.value = true
+  try {
+    const capabilities = await request.get('/payment/capabilities', { silent: true })
+    if (disposed || current !== capabilitySequence) return
+    wechatEnabled.value = Boolean(capabilities.wechat)
+    capabilitiesError.value = ''
+  } catch (e) {
+    if (disposed || current !== capabilitySequence) return
+    wechatEnabled.value = false
+    capabilitiesError.value = e.message || '微信支付能力暂时无法确认'
+  } finally { if (!disposed && current === capabilitySequence) capabilitiesLoading.value = false }
+}
 const dateRange = ref([])
 const refunds = ref([])
 const loading = ref(false)
@@ -47,7 +64,9 @@ const fetchRefunds = async () => {
       orderNumber: orderNumber.value.trim() || undefined, ...dateRangeParams(dateRange.value)
     } })
     if (current !== sequence) return
-    refunds.value = res.list || []; total.value = Number(res.total || 0)
+    refunds.value = res.list || []; total.value = Number(res.total || 0); listError.value = ''
+  } catch (e) {
+    if (current === sequence && !disposed) listError.value = e.message || '退款记录加载失败，请重试'
   } finally { if (current === sequence) loading.value = false }
 }
 const filter = () => { page.value = 1; fetchRefunds() }
@@ -95,10 +114,11 @@ const openReturns = async row => {
   const detail = await request.get(`/refunds/${row.id}/returns`)
   returnRow.value = row; returnItems.value = (detail.items || []).map(item => ({ ...item, quantity: 0 }))
   returnRecords.value = detail.records || []; received.value = false
+  automaticReturn.value = detail.automatic === true
   returnRequest.value = `return-${crypto.randomUUID()}`; returnDialog.value = true
 }
 const receiveReturns = async () => {
-  if (receiving.value) return
+  if (receiving.value || automaticReturn.value || !userStore.hasPermission('warehouse:view')) return
   const items = returnItems.value.filter(item => item.quantity > 0).map(item => ({ orderItemId: item.orderItemId, quantity: item.quantity }))
   if (!received.value || !items.length) { ElMessage.warning('请选择实际收到的商品数量，并确认验收可入库'); return }
   receiving.value = true
@@ -108,16 +128,17 @@ const receiveReturns = async () => {
   } finally { receiving.value = false }
 }
 onMounted(async () => {
-  const capabilities = await request.get('/payment/capabilities')
-  wechatEnabled.value = Boolean(capabilities.wechat)
-  await fetchRefunds()
+  await Promise.all([loadCapabilities(), fetchRefunds()])
+  if (disposed) return
   pollTimer = setInterval(() => { if (!loading.value && refunds.value.some(row => Number(row.status) === 1)) fetchRefunds().catch(() => {}) }, 15000)
 })
-onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
+onBeforeUnmount(() => { disposed = true; sequence++; capabilitySequence++; clearInterval(pollTimer) })
 </script>
 
 <template>
   <div>
+    <el-alert v-if="capabilitiesError" type="warning" :closable="false" show-icon class="mb-4" title="微信渠道能力暂时无法确认，现金和钱包退款记录仍可查看。"><p>{{ capabilitiesError }}</p><el-button :loading="capabilitiesLoading" @click="loadCapabilities">重新查询微信能力</el-button></el-alert>
+    <el-alert v-if="listError" :title="listError" type="error" :closable="false" show-icon class="mb-4"><el-button :loading="loading" @click="fetchRefunds">重新加载退款记录</el-button></el-alert>
     <el-alert title="支持已完成订单的退款申请、现金退款登记及演示退款。微信退款待真实商户配置启用；金额退款不自动补库存，完成退款后可按实际验收数量登记关联退货入库。" type="info" :closable="false" show-icon class="mb-4" />
     <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
       <h2 class="text-2xl font-bold text-slate-800">退款售后</h2>
@@ -163,17 +184,17 @@ onBeforeUnmount(() => { sequence++; clearInterval(pollTimer) })
       <el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="fetchRefunds" class="mt-4" />
     </el-card>
     <el-dialog v-model="returnDialog" title="关联退货入库" width="680px" :close-on-click-modal="!receiving" :show-close="!receiving">
-      <el-alert title="仅登记实际收回且验收可入库的商品。只退款无需操作；不可再通过普通入库重复登记。" type="warning" :closable="false" />
+      <el-alert :title="automaticReturn ? '本次未制作退菜已自动恢复库存，可查看记录。' : '仅登记实际收回且验收可入库的商品。只退款无需操作；不可再通过普通入库重复登记。'" :type="automaticReturn ? 'success' : 'warning'" :closable="false" />
       <p class="my-3 break-all">退款单：{{ returnRow?.refundNo }}</p>
       <el-table :data="returnItems">
         <el-table-column label="商品" min-width="170"><template #default="{ row }">{{ row.name }}<p class="text-sm text-slate-500">{{ attributesText(row.selectedAttrs) }}</p></template></el-table-column>
         <el-table-column prop="purchased" label="购买" width="70" /><el-table-column prop="returned" label="已退" width="70" />
-        <el-table-column label="本次验收入库" width="180"><template #default="{ row }"><el-input-number v-model="row.quantity" :min="0" :max="row.remaining" :precision="0" :disabled="receiving || !userStore.hasPermission('warehouse:view') || !row.remaining" /></template></el-table-column>
+        <el-table-column v-if="!automaticReturn" label="本次验收入库" width="180"><template #default="{ row }"><el-input-number v-model="row.quantity" :min="0" :max="row.remaining" :precision="0" :disabled="receiving || !userStore.hasPermission('warehouse:view') || !row.remaining" /></template></el-table-column>
       </el-table>
-      <el-checkbox v-model="received" class="mt-3" :disabled="receiving">商品已实际收到并验收可入库</el-checkbox>
+      <el-checkbox v-if="!automaticReturn" v-model="received" class="mt-3" :disabled="receiving">商品已实际收到并验收可入库</el-checkbox>
       <p class="my-3">历史退货：{{ returnRecords.length }} 笔</p>
       <el-table v-if="returnRecords.length" :data="returnRecords"><el-table-column prop="skuId" label="规格ID" /><el-table-column prop="quantity" label="数量" /><el-table-column prop="createdAt" label="入库时间" min-width="170" /></el-table>
-      <template #footer><el-button :disabled="receiving" @click="returnDialog = false">关闭</el-button><el-button v-if="userStore.hasPermission('warehouse:view')" type="primary" :loading="receiving" @click="receiveReturns">确认入库</el-button></template>
+      <template #footer><el-button :disabled="receiving" @click="returnDialog = false">关闭</el-button><el-button v-if="!automaticReturn && userStore.hasPermission('warehouse:view')" type="primary" :loading="receiving" @click="receiveReturns">确认入库</el-button></template>
     </el-dialog>
     <el-dialog v-model="dialog" title="申请退款" width="480px" :close-on-click-modal="!saving">
       <el-form label-width="90px">

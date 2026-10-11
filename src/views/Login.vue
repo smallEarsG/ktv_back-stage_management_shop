@@ -21,7 +21,10 @@ const firstAllowedPath = () => {
   const nav = [
     { path: '/workbench', permission: 'workbench:view' },
     { path: '/pos/index', permission: 'pos:view' },
-    { path: '/workbench', permission: 'workbench:view' },
+    { path: '/dining/seats', permission: 'dining:view' },
+    { path: '/dining/kitchen', permission: 'kitchen:operate' },
+    { path: '/dining/services', permission: 'service:operate' },
+    { path: '/dashboard', permission: 'dashboard:view' },
     { path: '/orders', permission: 'order:view' },
     { path: '/products', permission: 'product:view' },
     { path: '/refunds', permission: ['refund:view', 'refund:approve'] },

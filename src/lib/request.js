@@ -18,6 +18,8 @@ service.interceptors.response.use(response => {
   error.definitive = [400, 401, 403, 409, 422].includes(result.code)
   return Promise.reject(error)
 }, error => {
+  error.definitive = [400, 401, 403, 409, 422].includes(error.response?.status)
+  if (error.response?.data?.message) error.message = error.response.data.message
   if (!error.config?.silent) ElMessage.error(error.response?.data?.message || (error.response?.status === 403 ? '您没有此操作的权限，请联系店长' : '连接失败，请检查服务后重试'))
   if (error.response?.status === 401) useUserStore().logout()
   return Promise.reject(error)

@@ -30,6 +30,7 @@ const menuItems = [
   { path: '/dining', icon: Shop, label: '点餐营业', permission: 'dining:view', children: [
     { path: '/dining/seats', label: '台位营业', permission: 'dining:view' },
     { path: '/dining/kitchen', label: '后厨出餐', permission: 'kitchen:operate' },
+    { path: '/dining/prints', label: '出餐小票', permission: 'kitchen:operate' },
     { path: '/dining/services', label: '服务与售后', permission: ['service:operate', 'refund:view', 'refund:approve'] },
     { path: '/dining/shifts', label: '收银交班', permission: 'pos:view' },
     { path: '/dining/settings', label: '点餐场景', permission: 'settings:view' }

@@ -12,11 +12,22 @@ function page(request, storage = memory()) {
   const sandbox = { ...helpers, computed, ref, watch, request, localStorage: storage, crypto: { randomUUID: () => 'original-key' }, money: value => Number(value).toFixed(2),
     useUserStore: () => user, defineProps: () => ({ records: [], demoEnabled: true }), defineEmits: () => () => {}, onMounted: () => {}, onBeforeUnmount: callback => { sandbox.unmount = callback }, ElMessage: { success() {} } }
   vm.createContext(sandbox)
-  scope.run(() => vm.runInContext(source + '\napi = { pending, error, recoveryError, selected, bill, dialogVisible, cash, cashConfirmed, settleReady, restore, recover, perform, fulfill, settle, loadBill, load, options };', sandbox))
+  scope.run(() => vm.runInContext(source + '\napi = { pending, error, recoveryError, selected, bill, dialogVisible, cash, cashConfirmed, settleReady, restore, recover, perform, fulfill, settle, loadBill, load, options, roomId, idleRooms };', sandbox))
   return { ...sandbox.api, user, storage, stop: () => { sandbox.unmount(); scope.stop() } }
 }
 const options = { packages: [], rooms: [], skus: [] }
 const get = async path => path.endsWith('/options') ? options : { list: [], platformGross: 0, fees: 0, actual: 0, difference: 0 }
+
+test('顾客先扫码的空场次关联团购时提交明确的原场次编号', async () => {
+  const writes = [], choices = { packages: [], skus: [], rooms: [{ id: 1, roomNumber: 'A', isAvailable: 1, sessionId: 55, eligibleGroupBuy: true }, { id: 2, roomNumber: 'B', isAvailable: 1, sessionId: 56, eligibleGroupBuy: false }] }
+  const view = page({ get: async path => path.endsWith('/options') ? choices : { list: [] }, post: async (path, body) => { writes.push({ path, body }); return { redemptionId: id, sessionId: 55, packageOrderId: 71 } } })
+  try {
+    await view.load(); assert.equal(view.idleRooms.value.length, 1)
+    view.selected.value = { id }; view.roomId.value = 'A'; await view.fulfill()
+    assert.equal(writes[0].body.sessionId, 55); assert.equal(writes[0].body.roomId, 'A')
+    view.roomId.value = 'B'; await view.fulfill(); assert.equal(writes.length, 1)
+  } finally { view.stop() }
+})
 test('正式联动原操作按门店员工隔离，损坏数据阻止继续操作', () => {
   const storage = memory(), operation = { path: `/group-buy/records/${id}/fulfill`, body: { roomId: 'A' }, label: '开台' }
   helpers.saveFulfillmentPending(storage, 1, 9, operation)
