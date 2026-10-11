@@ -36,6 +36,7 @@ const router = createRouter({
         })),
         { path: 'operations', redirect: '/operations/overview' },
         { path: 'group-buy', name: 'GroupBuy', component: () => import('@/views/group-buy/GroupBuyConsole.vue'), meta: { title: '团购核销', requiresAuth: true, permission: 'pos:view' } },
+        { path: 'group-buy/demo', name: 'GroupBuyDemo', component: () => import('@/views/group-buy/GroupBuyDemoConsole.vue'), meta: { title: '团购模拟演练', requiresAuth: true, permission: 'pos:view' } },
         {
           path: 'dashboard',
           name: 'Dashboard',

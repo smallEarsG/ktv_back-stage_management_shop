@@ -10,6 +10,7 @@ const user = useUserStore()
 const channels = ref([]), platform = ref('DOUYIN'), input = ref(''), preparation = ref(null), selectedId = ref('')
 const rows = ref([]), total = ref(0), page = ref(1), loading = ref(false), busy = ref(false), error = ref('')
 const pending = ref(null), recoveryError = ref(''), pendingRecord = ref(null)
+const demoEnabled = ref(false)
 const active = computed(() => channels.value.find(channel => channel.platform === platform.value))
 const selected = computed(() => preparation.value?.certificates.find(certificate => certificate.id === selectedId.value))
 const admin = computed(() => user.userInfo?.role === 'admin')
@@ -54,6 +55,14 @@ async function inspect() {
     preparation.value = result; selectedId.value = result.certificates?.[0]?.id || ''
   } catch (e) { if (version === generation && inspection === inspectGeneration) error.value = e.response?.data?.message || e.message }
   finally { if (version === generation) busy.value = false }
+}
+async function loadDemoCapability() {
+  const version = generation
+  demoEnabled.value = false
+  try {
+    const result = await request.get('/group-buy/demo/capabilities', { silent: true })
+    if (version === generation) demoEnabled.value = result.enabled === true
+  } catch { /* The real redemption page remains usable when demo capability is unavailable. */ }
 }
 async function submitVerification(retry = false) {
   if (busy.value || recoveryError.value || (!retry && (pending.value || !selected.value)) || (retry && pending.value?.action !== 'verify')) return
@@ -107,14 +116,14 @@ async function cancelRecord(row) {
 watch([platform, input], () => { preparation.value = null; selectedId.value = ''; inspectGeneration++ })
 watch(identity, async () => {
   generation++; inspectGeneration++; busy.value = false; preparation.value = null; selectedId.value = ''; input.value = ''; channels.value = []; rows.value = []; page.value = 1
-  restore(); await load()
+  restore(); await Promise.all([load(), loadDemoCapability()])
 })
-onMounted(async () => { restore(); await load() })
+onMounted(async () => { restore(); await Promise.all([load(), loadDemoCapability()]) })
 </script>
 
 <template>
   <div class="group-buy-page">
-    <div class="heading"><div><span class="eyebrow">门店收银</span><h1><el-icon><Tickets /></el-icon> 团购核销</h1><p>先验券，核对套餐，再确认核销。每次只处理一张普通团购券。</p></div><el-button :icon="Refresh" :loading="loading" @click="load">刷新记录</el-button></div>
+    <div class="heading"><div><span class="eyebrow">门店收银</span><h1><el-icon><Tickets /></el-icon> 团购核销</h1><p>先验券，核对套餐，再确认核销。每次只处理一张普通团购券。</p></div><div class="heading-actions"><router-link v-if="demoEnabled" to="/group-buy/demo"><el-button type="warning" plain>模拟联动演练</el-button></router-link><el-button :icon="Refresh" :loading="loading" @click="load">刷新记录</el-button></div></div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-alert v-if="recoveryError" :title="recoveryError" type="error" :closable="false" show-icon />
     <div v-if="pending" class="pending-box">
@@ -153,6 +162,7 @@ onMounted(async () => { restore(); await load() })
 </template>
 
 <style scoped>
+.heading-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
 .group-buy-page{display:flex;flex-direction:column;gap:20px;padding:24px;color:#26384a}.heading,.panel-title,.channel>div,.scan-row,.certificate{display:flex;align-items:center;justify-content:space-between;gap:16px}.heading h1{font-size:27px;margin:6px 0 10px;display:flex;align-items:center}.eyebrow{font-size:12px;color:#667a8a}.heading p,.channel p,.hint,.muted,.panel-title>span{color:#6d7e8d;font-size:13px;line-height:1.6}.heading p{margin:0}.channel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.channel{padding:20px;text-align:left;background:#fff;border:1px solid #dee5ec;border-radius:12px;color:inherit;cursor:pointer}.channel.selected{border-color:#257eab;box-shadow:0 0 0 1px #257eab}.channel p{margin:12px 0 0}.panel{padding:24px;background:white;border:1px solid #e3e9ef;border-radius:12px}.panel-title{margin-bottom:20px}.panel-title h2{font-size:17px;margin:0;white-space:nowrap}.scan-row .el-input{flex:1}.empty-channel{padding:28px;text-align:center;background:#f7f9fc;border-radius:8px}.empty-channel p{font-size:14px;color:#6d7e8d;line-height:1.7}.empty-channel a{color:#187da9;font-size:14px}.hint{margin:12px 0 0}.certificate-list{margin-top:24px;display:flex;flex-direction:column;gap:12px}.certificate-list>p{font-size:13px;color:#6d7e8d}.certificate{padding:18px;background:#f7f9fc;border:1px solid #e2e9ef;border-radius:8px;cursor:pointer;justify-content:flex-start}.certificate>div{display:flex;flex-direction:column;gap:6px}.certificate>div>span,.certificate small{color:#6d7e8d;font-size:12px}.certificate .amount{margin-left:auto;text-align:right}.certificate-list>.el-button{align-self:flex-start;margin-top:8px}.pending-box{padding:20px;background:#fff8e8;border:1px solid #efdaaa;border-radius:12px}.pending-box p{font-size:14px;line-height:1.6}.pending-box small{display:block;color:#8a7343;margin-bottom:16px}.pending-box>div{display:flex;gap:12px;flex-wrap:wrap}.pagination{margin-top:20px;display:flex;justify-content:flex-end}.muted{margin-top:6px;font-size:12px}
 @media(max-width:900px){.channel-grid{grid-template-columns:1fr}.channel>div,.panel-title{align-items:flex-start;flex-direction:column}.group-buy-page{padding:16px}.heading{align-items:stretch;flex-direction:column}.heading>.el-button{align-self:flex-end}.heading h1{font-size:23px}.scan-row{align-items:stretch;flex-direction:column}.panel{padding:18px}.panel-title>span{font-size:12px}}
 </style>

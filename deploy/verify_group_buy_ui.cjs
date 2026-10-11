@@ -30,6 +30,7 @@ const channels = ready => [{ platform: 'DOUYIN', name: '抖音团购', ready, st
       if (pathname.startsWith('/api/')) {
         let data
         if (pathname === '/api/auth/user') data = { id: 9, storeId: 1, role: 'admin', username: '验收门店', permissions: ['pos:view'] }
+        else if (pathname === '/api/group-buy/demo/capabilities') data = { enabled: false, simulation: true }
         else if (pathname.endsWith('/channels')) data = channels(ready)
         else if (pathname.endsWith('/records')) data = { list: record ? [record] : [], total: record ? 1 : 0 }
         else if (pathname.endsWith('/prepare')) data = { id, platform: 'DOUYIN', expiresAt: '2026-10-11T23:59:59', certificates: [{ id: 'cert-1', title: '双人欢唱套餐 · 3小时', codeMask: '**** 9012', payAmount: 99, faceValue: 129 }] }
