@@ -7,7 +7,8 @@ import request from '@/lib/request'
 import RoomBillingSettings from '@/components/RoomBillingSettings.vue'
 import RoomBillingSettlement from '@/components/RoomBillingSettlement.vue'
 import DiningReturnRequest from '@/components/DiningReturnRequest.vue'
-import { sceneNames, sessionNames, fulfillmentNames, lineNames, serviceNames, nextLineState, money, attrsText, requestKey, receiptHtml, scenePreset } from '@/lib/dining'
+import ReceiptPreview from '@/components/ReceiptPreview.vue'
+import { sceneNames, sessionNames, fulfillmentNames, lineNames, serviceNames, nextLineState, money, attrsText, requestKey, scenePreset } from '@/lib/dining'
 
 const route = useRoute(), user = useUserStore()
 const tab = computed(() => route.meta.diningTab || 'seats')
@@ -16,6 +17,7 @@ const descriptions = { seats: '开台、加菜、结账和清台，集中处理�
 const cfg = reactive({ industry: 'KTV', seatLabel: '包厢', paymentMode: 'PREPAY', enabled: true, accepting: true, kitchen: true, sharedCart: true, allowAdd: true, allowService: true, allowPickup: false, printing: false, openTime: '00:00', closeTime: '00:00', weekdays: [1, 2, 3, 4, 5, 6, 7] })
 const rows = ref([]), services = ref([]), aftersales = ref([]), loading = ref(false), error = ref(''), busy = ref(false), keyword = ref(''), station = ref(''), lastUpdated = ref('')
 const printState = ref('ALL'), printPage = ref(1), receipts = ref([]), receiptError = ref(''), paperWidth = ref(80)
+const previewPayload = ref(null)
 const can = permission => user.hasPermission(permission)
 let generation = 0, timer, disposed = false
 const seats = computed(() => rows.value.filter(s => !keyword.value || String(s.roomNumber).includes(keyword.value)))
@@ -143,7 +145,7 @@ async function processService(row) { await act(() => request.post(`/dining/servi
 const approvalVisible = ref(false), approval = reactive({ id: null, action: 'approve', resolution: '' })
 function review(row, action) { Object.assign(approval, { id: row.id, action, resolution: '' }); approvalVisible.value = true }
 async function resolve() { if (!approval.resolution.trim()) { ElMessage.warning('请填写处理说明'); return }; if (await act(() => request.post(`/dining/aftersales/${approval.id}`, { action: approval.action, resolution: approval.resolution }), approval.action === 'approve' ? '申请已审核；退款请到退款售后继续处理' : '已回复顾客')) approvalVisible.value = false }
-function printTicket(row) { const win = window.open('', '_blank', 'width=420,height=650'); if (!win) { ElMessage.warning('请允许打开小票窗口'); return }; win.document.write(receiptHtml(row.payload || row.printPayload, { paperWidth: paperWidth.value })); win.document.close() }
+function printTicket(row) { previewPayload.value = row.payload || row.printPayload }
 async function markPrint(row, action) { if (action === 'retry' && row.state === 'PRINTED') { try { await ElMessageBox.confirm('这张小票已确认打印。重新排队可能造成重复出餐，请核对后继续。', '重新打印') } catch { return } }; await act(() => request.post(`/dining/prints/${row.id}`, { action })) }
 function changePrintPage(delta) { printPage.value = Math.max(1, printPage.value + delta); load() }
 watch(printState, () => { printPage.value = 1; load() })
@@ -159,6 +161,7 @@ onBeforeUnmount(() => { disposed = true; generation++; billGeneration++; clearIn
 
 <template>
   <div class="dining-console">
+    <ReceiptPreview :payload="previewPayload" :paper-width="paperWidth" @close="previewPayload = null" />
     <header class="dining-heading"><div><span class="eyebrow">门店营业</span><h1>{{ titles[tab] }}</h1><p>{{ descriptions[tab] }}</p></div><div class="heading-actions"><span v-if="lastUpdated" class="sync-time">{{ lastUpdated }} 更新</span><el-button :loading="loading" @click="load()">刷新</el-button></div></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="notice" />
     <el-alert v-if="pending" title="有一笔交易结果待确认。请恢复原交易，再提交新的订单或收款。" type="warning" :closable="false" class="notice"><el-button :loading="busy" @click="recover">确认原交易结果</el-button></el-alert>
