@@ -2,6 +2,10 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 export const recordState = state => ({ VERIFYING: '核销提交中', VERIFIED: '核销成功', REJECTED: '核销未通过', UNKNOWN: '核销结果待确认', CANCELLING: '撤销提交中', CANCEL_UNKNOWN: '撤销结果待确认', CANCELLED: '已撤销' }[state] || '状态待核对')
 export const isUncertain = state => ['VERIFYING', 'UNKNOWN', 'CANCELLING', 'CANCEL_UNKNOWN'].includes(state)
 export const money = value => value === null || value === undefined ? '—' : Number(value).toFixed(2)
+export const platformName = platform => ({ DOUYIN: '抖音', MEITUAN: '美团 / 大众点评', DIANPING: '大众点评' }[platform] || '团购平台')
+export const voucherPlaceholder = platform => platform === 'DOUYIN'
+  ? '用扫码枪读取二维码，或输入抖音12位/15位券码'
+  : '输入美团或大众点评团购券码'
 export const pendingKey = (store, user) => `ktv:group-buy:${store}:${user}`
 export function readPending(storage, store, user) {
   const source = storage.getItem(pendingKey(store, user))

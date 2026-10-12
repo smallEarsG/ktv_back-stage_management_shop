@@ -12,11 +12,20 @@ function page(request, storage = memory()) {
   const sandbox = { ...helpers, computed, ref, watch, request, localStorage: storage, crypto: { randomUUID: () => 'original-key' }, money: value => Number(value).toFixed(2),
     useUserStore: () => user, defineProps: () => ({ records: [], demoEnabled: true }), defineEmits: () => () => {}, onMounted: () => {}, onBeforeUnmount: callback => { sandbox.unmount = callback }, ElMessage: { success() {} } }
   vm.createContext(sandbox)
-  scope.run(() => vm.runInContext(source + '\napi = { pending, error, recoveryError, selected, bill, dialogVisible, cash, cashConfirmed, settleReady, restore, recover, perform, fulfill, settle, loadBill, load, options, roomId, idleRooms };', sandbox))
+  scope.run(() => vm.runInContext(source + '\napi = { pending, error, recoveryError, selected, bill, dialogVisible, cash, cashConfirmed, settleReady, restore, recover, perform, fulfill, settle, loadBill, load, options, roomId, idleRooms, form, editMapping, saveMapping };', sandbox))
   return { ...sandbox.api, user, storage, stop: () => { sandbox.unmount(); scope.stop() } }
 }
 const options = { packages: [], rooms: [], skus: [] }
 const get = async path => path.endsWith('/options') ? options : { list: [], platformGross: 0, fees: 0, actual: 0, difference: 0 }
+test('餐饮套餐默认不计时，保存不夹带隐藏收费项，旧计时映射保留原方式', async () => {
+  const writes = [], view = page({ get, put: async (path, body) => writes.push({ path, body }) })
+  try {
+    view.editMapping(); assert.equal(view.form.value.platform, 'MEITUAN'); assert.equal(view.form.value.billingMode, 'DINING')
+    Object.assign(view.form.value, { platformSkuId: 'meal-1', packageSkuId: 12, overtimeSkuId: 99, includedMinutes: 180 })
+    await view.saveMapping(); assert.equal(writes[0].body.overtimeSkuId, 0); assert.equal(writes[0].body.includedMinutes, 0); assert.equal(writes[0].body.packageSkuId, 12)
+    view.editMapping({ platform: 'DOUYIN', includedMinutes: 180, overtimeSkuId: 19 }); assert.equal(view.form.value.billingMode, 'TIMED'); assert.equal(view.form.value.overtimeSkuId, 19)
+  } finally { view.stop() }
+})
 
 test('顾客先扫码的空场次关联团购时提交明确的原场次编号', async () => {
   const writes = [], choices = { packages: [], skus: [], rooms: [{ id: 1, roomNumber: 'A', isAvailable: 1, sessionId: 55, eligibleGroupBuy: true }, { id: 2, roomNumber: 'B', isAvailable: 1, sessionId: 56, eligibleGroupBuy: false }] }

@@ -11,24 +11,37 @@ function memory() {
   return { data, getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key) }
 }
 function view(request, storage = memory()) {
+  const confirmations = [], prompts = [], warnings = []
   const source = fs.readFileSync(new URL('../views/group-buy/GroupBuyConsole.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), user = { currentStoreId: 1, userInfo: { id: 9, role: 'admin' } }
   const sandbox = { ...helpers, ref, computed, watch, request, localStorage: storage,
-    useUserStore: () => user, onMounted: () => {}, ElMessage: { success() {}, warning() {} },
-    ElMessageBox: { confirm: async () => {}, prompt: async () => ({ value: '误选套餐' }) } }
+    useUserStore: () => user, onMounted: () => {}, ElMessage: { success() {}, warning: text => warnings.push(text) },
+    ElMessageBox: { confirm: async text => { confirmations.push(text) }, prompt: async text => { prompts.push(text); return { value: '误选套餐' } } } }
   vm.createContext(sandbox)
   scope.run(() => vm.runInContext(script + '\napi = { channels, platform, input, preparation, selectedId, pending, pendingRecord, error, recoveryError, page, rows, load, inspect, submitVerification, queryRecord, restore, cancelRecord };', sandbox))
-  return { ...sandbox.api, storage, stop: () => scope.stop() }
+  return { ...sandbox.api, storage, confirmations, prompts, warnings, stop: () => scope.stop() }
 }
 function fakeRequest(post) {
   return { post, get: async path => path === '/group-buy/channels' ? [{ platform: 'DOUYIN', ready: true }] : { list: [], total: 0 } }
 }
 function prepared(page) {
-  page.channels.value = [{ platform: 'DOUYIN', ready: true }]
+  page.channels.value = [{ platform: 'MEITUAN', ready: true }]
   page.preparation.value = { id, certificates: [{ id: 'cert-1', title: '双人套餐', payAmount: 99 }] }
   page.selectedId.value = 'cert-1'
 }
+test('美团是优先入口，未开通时不能发请求，确认金额和撤销说明按餐饮平台区分', async () => {
+  const calls = [], page = view({ get: async path => path.endsWith('/channels') ? [{ platform: 'MEITUAN', ready: false }] : { list: [], total: 0 },
+    post: async (path, body) => { calls.push({ path, body }); return { id, state: 'VERIFIED', message: '平台暂不允许撤销' } } })
+  try {
+    assert.equal(page.platform.value, 'MEITUAN'); await page.load(); page.input.value = '010011112345'; await nextTick(); await page.inspect(); assert.equal(calls.length, 0)
+    prepared(page); page.preparation.value.amountLabel = '商家实收参考（未扣手续费）'; await page.submitVerification()
+    assert.match(page.confirmations[0], /商家实收参考/); assert.doesNotMatch(page.confirmations[0], /顾客实付/)
+    await page.cancelRecord({ id, platform: 'MEITUAN', state: 'VERIFIED', title: '双人餐饮套餐' })
+    assert.match(page.prompts[0], /原券作废/); assert.match(page.prompts[0], /点评券不支持撤销/); assert.doesNotMatch(page.prompts[0], /恢复可用/)
+    assert.equal(page.warnings.at(-1), '平台暂不允许撤销')
+  } finally { page.stop() }
+})
 test('团购意图按门店和员工保存，损坏记录不能被静默忽略', () => {
   const storage = memory()
   helpers.savePending(storage, 1, 9, { id, action: 'verify', certificateId: 'cert-1' })
@@ -77,7 +90,7 @@ test('修改券码会丢弃原验券结果，迟到的查询不能覆盖新输�
   let resolve
   const page = view(fakeRequest(() => new Promise(done => { resolve = done })))
   try {
-    page.channels.value = [{ platform: 'DOUYIN', ready: true }]; page.input.value = '123456789012'; await nextTick()
+    page.platform.value = 'DOUYIN'; page.channels.value = [{ platform: 'DOUYIN', ready: true }]; page.input.value = '123456789012'; await nextTick()
     const inspecting = page.inspect()
     page.input.value = '999999999999'; await nextTick()
     resolve({ id, certificates: [{ id: 'cert-1' }] }); await inspecting

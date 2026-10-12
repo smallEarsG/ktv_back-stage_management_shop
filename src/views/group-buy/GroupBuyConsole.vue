@@ -4,11 +4,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Tickets, Refresh, Search } from '@element-plus/icons-vue'
 import request from '@/lib/request'
 import { useUserStore } from '@/stores/user'
-import { recordState, isUncertain, money, readPending, savePending, clearPending, operationResolved } from '@/lib/group-buy'
+import { recordState, isUncertain, money, platformName, voucherPlaceholder, readPending, savePending, clearPending, operationResolved } from '@/lib/group-buy'
 import GroupBuyFulfillmentPanel from './GroupBuyFulfillmentPanel.vue'
 
 const user = useUserStore()
-const channels = ref([]), platform = ref('DOUYIN'), input = ref(''), preparation = ref(null), selectedId = ref('')
+const channels = ref([]), platform = ref('MEITUAN'), input = ref(''), preparation = ref(null), selectedId = ref('')
 const rows = ref([]), total = ref(0), page = ref(1), loading = ref(false), busy = ref(false), error = ref('')
 const pending = ref(null), recoveryError = ref(''), pendingRecord = ref(null)
 const demoEnabled = ref(false)
@@ -26,10 +26,12 @@ function restore() {
 function acceptRecord(record, version) {
   if (version !== generation) return
   if (!pending.value || pending.value.id === record.id) pendingRecord.value = record
+  const pendingAction = pending.value?.action
   if (operationResolved(pending.value, record)) {
     clearPending(localStorage, user.currentStoreId, user.userInfo?.id); pending.value = null
   }
-  if (record.state === 'VERIFIED') ElMessage.success('平台已确认核销成功')
+  if (record.state === 'VERIFIED' && pendingAction === 'cancel') ElMessage.warning(record.message || '平台未撤销此券，请核对原记录')
+  else if (record.state === 'VERIFIED') ElMessage.success('平台已确认核销成功')
   else if (record.state === 'CANCELLED') ElMessage.success('平台已确认撤销成功')
   else ElMessage.warning(record.message || recordState(record.state))
 }
@@ -72,7 +74,7 @@ async function submitVerification(retry = false) {
   try {
     if (!retry) {
       const certificate = selected.value
-      await ElMessageBox.confirm(`确认核销「${certificate.title}」这一张券？顾客实付 ¥${money(certificate.payAmount)}。`, '确认团购核销', { confirmButtonText: '确认核销', cancelButtonText: '返回检查' })
+      await ElMessageBox.confirm(`确认核销「${certificate.title}」这一张券？${preparation.value.amountLabel || '团购金额'} ¥${money(certificate.payAmount)}。`, '确认团购核销', { confirmButtonText: '确认核销', cancelButtonText: '返回检查' })
       if (version !== generation) return
       const intent = { id: preparation.value.id, action: 'verify', certificateId: certificate.id }
       savePending(localStorage, user.currentStoreId, user.userInfo?.id, intent); pending.value = intent
@@ -102,7 +104,7 @@ async function cancelRecord(row) {
   if (!admin.value || busy.value || pending.value || recoveryError.value || row.state !== 'VERIFIED') return
   const version = generation; busy.value = true; error.value = ''
   try {
-    const { value } = await ElMessageBox.prompt(`撤销「${row.title}」的核销后，此券将恢复可用。请填写原因。平台会再次检查撤销时限。`, '撤销核销', { inputValidator: text => !!text?.trim() && text.length <= 200 || '请填写200字以内的撤销原因', confirmButtonText: '确认撤销', cancelButtonText: '保留核销' })
+    const { value } = await ElMessageBox.prompt(`撤销「${row.title}」的核销。${row.platform === 'MEITUAN' ? '美团撤销后原券作废，新券由平台发送；点评券不支持撤销。' : '撤销结果以平台为准。'}请填写原因。`, '撤销核销', { inputValidator: text => !!text?.trim() && text.length <= 200 || '请填写200字以内的撤销原因', confirmButtonText: '确认撤销', cancelButtonText: '保留核销' })
     if (version !== generation) return
     const intent = { id: row.id, action: 'cancel' }
     savePending(localStorage, user.currentStoreId, user.userInfo?.id, intent); pending.value = intent
@@ -143,16 +145,16 @@ onMounted(async () => { restore(); await Promise.all([load(), loadDemoCapability
       <div class="panel-title"><h2>读取团购券</h2><span>{{ active?.name || '正在读取接入状态' }}</span></div>
       <div v-if="active && !active.ready" class="empty-channel"><strong>{{ active.status }}</strong><p>{{ active.description }}</p><a :href="active.url" target="_blank" rel="noopener noreferrer">查看官方接入平台</a></div>
       <template v-else>
-        <div class="scan-row"><el-input v-model="input" placeholder="用扫码枪读取二维码，或输入抖音12位/15位券码" maxlength="4096" :disabled="busy || !!pending || !!recoveryError || !active?.ready" clearable @keyup.enter="inspect" /><el-button type="primary" :icon="Search" :loading="busy" :disabled="!!pending || !!recoveryError || !active?.ready || !input.trim()" @click="inspect">验券查询</el-button></div>
+        <div class="scan-row"><el-input v-model="input" :placeholder="voucherPlaceholder(platform)" maxlength="4096" :disabled="busy || !!pending || !!recoveryError || !active?.ready" clearable @keyup.enter="inspect" /><el-button type="primary" :icon="Search" :loading="busy" :disabled="!!pending || !!recoveryError || !active?.ready || !input.trim()" @click="inspect">验券查询</el-button></div>
         <p class="hint">仅支持普通单次团购券；次卡、代金券、预约品等请使用平台工具处理。</p>
-        <div v-if="preparation" class="certificate-list"><p>核对券信息，并选择这一笔要核销的券。此次验券有效至 {{ dateText(preparation.expiresAt) }}。</p><label v-for="certificate in preparation.certificates" :key="certificate.id" class="certificate"><input v-model="selectedId" type="radio" :value="certificate.id" :disabled="busy" /><div><strong>{{ certificate.title }}</strong><span>{{ certificate.codeMask }}</span></div><div class="amount"><small>顾客实付</small><strong>¥{{ money(certificate.payAmount) }}</strong></div></label><el-button type="primary" :disabled="!selected || busy || !!pending || !!recoveryError" :loading="busy" @click="submitVerification(false)">确认核销所选券</el-button></div>
+        <div v-if="preparation" class="certificate-list"><p>核对券信息，并选择这一笔要核销的券。此次验券有效至 {{ dateText(preparation.expiresAt) }}。</p><label v-for="certificate in preparation.certificates" :key="certificate.id" class="certificate"><input v-model="selectedId" type="radio" :value="certificate.id" :disabled="busy" /><div><strong>{{ certificate.title }}</strong><span>{{ certificate.codeMask }}</span></div><div class="amount"><small>{{ preparation.amountLabel || '顾客实付' }}</small><strong>¥{{ money(certificate.payAmount) }}</strong></div></label><el-button type="primary" :disabled="!selected || busy || !!pending || !!recoveryError" :loading="busy" @click="submitVerification(false)">确认核销所选券</el-button></div>
       </template>
     </section>
     <section class="panel">
       <div class="panel-title"><h2>核销记录</h2><span>平台金额为券信息，结算到账请以平台账单为准</span></div>
       <el-table v-loading="loading" :data="rows" empty-text="暂无核销记录" style="width: 100%">
-        <el-table-column label="套餐 / 券码" min-width="230"><template #default="{ row }"><strong>{{ row.title }}</strong><div class="muted">{{ row.codeMask }} · {{ row.platform === 'DOUYIN' ? '抖音' : '美团 / 大众点评' }}</div></template></el-table-column>
-        <el-table-column label="顾客实付" width="115"><template #default="{ row }">¥{{ money(row.payAmount) }}</template></el-table-column>
+        <el-table-column label="套餐 / 券码" min-width="230"><template #default="{ row }"><strong>{{ row.title }}</strong><div class="muted">{{ row.codeMask }} · {{ platformName(row.platform) }}</div></template></el-table-column>
+        <el-table-column label="团购金额" min-width="175"><template #default="{ row }">¥{{ money(row.payAmount) }}<div class="muted">{{ row.amountLabel || '顾客实付' }}</div></template></el-table-column>
         <el-table-column label="状态" min-width="200"><template #default="{ row }"><el-tag :type="isUncertain(row.state) ? 'warning' : row.state === 'VERIFIED' ? 'success' : 'info'">{{ recordState(row.state) }}</el-tag><div class="muted">{{ row.remoteStatus || row.message }}</div></template></el-table-column>
         <el-table-column label="操作时间" min-width="170"><template #default="{ row }">{{ dateText(row.createdAt) }}<div class="muted">员工 #{{ row.operatorId }}</div></template></el-table-column>
         <el-table-column label="操作" width="170"><template #default="{ row }"><el-button v-if="!row.simulation" link type="primary" :disabled="busy" @click="queryRecord(row.id)">查询状态</el-button><el-button v-if="admin && row.state === 'VERIFIED' && !row.fulfillment && !row.simulation" link type="danger" :disabled="busy || !!pending || !!recoveryError" @click="cancelRecord(row)">撤销核销</el-button></template></el-table-column>
