@@ -9,6 +9,8 @@ import 'dayjs/locale/zh-cn'
 import './style.css'
 import App from './App.vue'
 import router from './router'
+import { installTelemetry } from '@/lib/telemetry'
+import { reportTelemetry } from '@/lib/request'
 
 dayjs.locale('zh-cn')
 
@@ -25,4 +27,5 @@ app.use(ElementPlus, {
   locale: zhCn,
 })
 
+installTelemetry(app, reportTelemetry)
 app.mount('#app')

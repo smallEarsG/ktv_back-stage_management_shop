@@ -8,9 +8,9 @@ import * as helpers from './dining.js'
 const script = path => fs.readFileSync(new URL(path, import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replaceAll('import.meta.env', 'env')
 function requestRuntime() {
   let rejected
-  const sandbox = { axios: { create: () => ({ interceptors: { request: { use() {} }, response: { use(ok, fail) { rejected = fail } } } }) }, env: {}, useUserStore: () => ({ logout() {} }), ElMessage: { error() {} } }
+  const sandbox = { createTelemetryReporter: () => () => {}, authStorage: { getItem() {} }, axios: { create: () => ({ interceptors: { request: { use() {} }, response: { use(ok, fail) { rejected = fail } } } }) }, env: {}, useUserStore: () => ({ logout() {} }), ElMessage: { error() {} } }
   vm.createContext(sandbox)
-  const source = fs.readFileSync(new URL('./request.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replaceAll('import.meta.env', 'env').replace('export default service', '')
+  const source = fs.readFileSync(new URL('./request.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replaceAll('import.meta.env', 'env').replace('export const reportTelemetry', 'const reportTelemetry').replace('export default service', '')
   vm.runInContext(source, sandbox)
   return rejected
 }
