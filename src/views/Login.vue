@@ -52,6 +52,7 @@ const handleLogin = async () => {
     })
     
     if (success) {
+      if (userStore.userInfo?.passwordChangeRequired) { router.replace('/account/security'); return }
       const target = firstAllowedPath()
       if (!target) {
         ElMessage.warning('该账号无权限，请联系管理员')

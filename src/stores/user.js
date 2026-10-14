@@ -46,6 +46,7 @@ export const useUserStore = defineStore('user', () => {
       }
 
       token.value = accessToken
+      lastRefresh = 0
       userInfo.value = user
       permissions.value = user.permissions || []
       
@@ -65,6 +66,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    lastRefresh = 0
     token.value = null
     userInfo.value = null
     permissions.value = []

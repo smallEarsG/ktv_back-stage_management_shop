@@ -23,6 +23,7 @@ const router = createRouter({
       component: AppLayout,
       redirect: '/workbench',
       children: [
+        { path: 'account/security', name: 'AccountSecurity', component: () => import('@/views/AccountSecurity.vue'), meta: { title: '修改密码', requiresAuth: true } },
         ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({
           path: `dining/${tab}`, name: `Dining-${tab}`,
           component: () => import('@/views/dining/DiningConsole.vue'),
@@ -115,6 +116,8 @@ router.beforeEach(async (to, from, next) => {
   }
   if (to.meta.requiresAuth && !userStore.token) {
     next('/login')
+  } else if (to.meta.requiresAuth && userStore.userInfo?.passwordChangeRequired && to.path !== '/account/security') {
+    next('/account/security')
   } else if (to.meta.permission && !userStore.hasPermission(to.meta.permission)) {
     next('/403')
   } else {

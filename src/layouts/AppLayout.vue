@@ -2,6 +2,7 @@
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import ServiceReminder from '@/components/ServiceReminder.vue'
 import {
   Odometer,
   ShoppingCart,
@@ -138,6 +139,7 @@ const handleLogout = () => {
           </span>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item @click="router.push('/account/security')">修改密码</el-dropdown-item>
               <el-dropdown-item @click="handleLogout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -145,6 +147,7 @@ const handleLogout = () => {
       </el-header>
       
       <el-main class="app-main" :class="{ 'cashier-main': route.name === 'PosIndex' }">
+        <ServiceReminder v-if="!userStore.userInfo?.passwordChangeRequired" />
         <el-alert v-if="demoMode" title="演示环境 · 仅使用测试数据；演示支付不扣款，真实支付和退款未开放。" type="info" :closable="false" class="mb-5" show-icon />
         <router-view v-slot="{ Component }">
           <transition name="fade">

@@ -5,10 +5,13 @@ import request from '@/lib/request'
 import { authStorage } from '@/lib/auth-storage'
 import { useUserStore } from '@/stores/user'
 import QRCode from 'qrcode'
+import ResetStaffPassword from '@/components/ResetStaffPassword.vue'
+import MerchantAudit from '@/components/MerchantAudit.vue'
 
 const activeTab = ref('store')
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+const resetStaff = ref(null)
 const storeLoading = ref(false)
 const storeSaving = ref(false)
 const storeProfile = reactive({ storeName: '', contactPhone: '', businessHours: '', address: '' })
@@ -210,7 +213,8 @@ const availablePermissions = [
   { label: '财务管理', value: 'finance:view' },
   { label: '仓库管理', value: 'warehouse:view' },
   { label: '运营中心', value: 'operations:view' },
-  { label: '门店设置', value: 'settings:view' }
+  { label: '门店设置', value: 'settings:view' },
+  { label: '编辑点餐场景', value: 'settings:edit' }
 ]
 
 const handlePermissionSet = (row) => {
@@ -419,12 +423,14 @@ watch(activeTab, (val) => {
 
 <template>
   <el-card>
+    <ResetStaffPassword :staff="resetStaff" @close="resetStaff = null" />
     <el-dialog v-model="qrVisible" :title="`${qrRoom} 点单二维码`" width="440px">
       <img :src="qrImage" alt="点单二维码" class="mx-auto" />
       <p class="text-xs break-all text-slate-500">{{ qrTarget }}</p>
       <template #footer><a :href="qrImage" :download="`${qrRoom}-点单二维码.png`"><el-button type="primary">下载二维码</el-button></a></template>
     </el-dialog>
     <el-tabs v-model="activeTab">
+      <el-tab-pane v-if="isAdmin" label="操作记录" name="audit"><MerchantAudit v-if="activeTab === 'audit'" /></el-tab-pane>
       <el-tab-pane label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
       <el-tab-pane label="门店资料" name="store">
         <el-form v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
@@ -551,6 +557,7 @@ watch(activeTab, (val) => {
             <template #default="{ row }">
               <el-button link type="primary" v-if="isAdmin" @click="handlePermissionSet(row)" :disabled="row.role === 'admin'">权限设置</el-button>
               <el-button link type="danger" v-if="isAdmin" @click="handleDeleteStaff(row)" :disabled="row.role === 'admin'">删除</el-button>
+              <el-button v-if="isAdmin && row.role !== 'admin'" link type="warning" @click="resetStaff = row">重置密码</el-button>
             </template>
           </el-table-column>
         </el-table>
