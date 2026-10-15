@@ -4,19 +4,21 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { computed, effectScope, reactive, ref, watch, nextTick } from 'vue'
 import * as helpers from './operations.js'
+import * as birthdayHelpers from './birthdays.js'
 
 function view(request, operationTab = 'members') {
   const source = fs.readFileSync(new URL('../views/operations/OperationsCenter.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), cleanup = [], storage = new Map()
-  const sandbox = { ...helpers, money: helpers.amountText, ref, reactive, computed, watch, request,
+  const route = reactive({ meta: { operationTab }, query: {} }), navigations = []
+  const sandbox = { ...helpers, ...birthdayHelpers, money: helpers.amountText, ref, reactive, computed, watch, request,
     setInterval: () => 1, clearInterval: () => {}, onMounted: () => {}, onBeforeUnmount: fn => cleanup.push(fn),
-    useRoute: () => ({ meta: { operationTab } }), useUserStore: () => ({ currentStoreId: 2, userInfo: { role: 'admin' } }),
+    useRoute: () => route, useRouter: () => ({ push: value => navigations.push(value) }), useUserStore: () => ({ currentStoreId: 2, userInfo: { role: 'admin' } }),
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     ElMessage: { success: () => {}, error: () => {}, warning: () => {} }, ElMessageBox: { confirm: async () => {} } }
   vm.createContext(sandbox)
-  scope.run(() => vm.runInContext(script + '\napi = { open, form, recharge, operationMember, memberOptions, refreshOperationMember, save, memberError, pending, dialogOpen, filterLedger, ledgerFilters, page, load };', sandbox))
-  return { ...sandbox.api, stop: () => { cleanup.forEach(fn => fn()); scope.stop() } }
+  scope.run(() => vm.runInContext(script + '\napi = { open, form, recharge, operationMember, memberOptions, refreshOperationMember, save, memberError, pending, dialogOpen, filterLedger, ledgerFilters, page, load, birthdayScope, birthdayInvalid, selectBirthdays, rows };', sandbox))
+  return { ...sandbox.api, route, navigations, stop: () => { cleanup.forEach(fn => fn()); scope.stop() } }
 }
 
 const fresh = { id: 120, name: '王会员', phone: '13800000001', status: 'ACTIVE', principal: 100, bonus: 10 }
@@ -94,5 +96,57 @@ test('钱包筛选在查询后应用并重置分页，翻页保留已查询条�
     await page.load()
     assert.equal(reads[1].page, 2)
     assert.equal(reads[1].keyword, '王会员')
+  } finally { page.stop() }
+})
+
+test('生日范围由服务端筛选并分页，切换范围忽略先前的慢响应', async () => {
+  const pending = [], reads = []
+  const page = view({ get: (path, config) => { reads.push({ path, ...config.params }); return new Promise(resolve => pending.push(resolve)) } })
+  try {
+    page.page.value = 3
+    const first = page.selectBirthdays('TODAY'), second = page.selectBirthdays('NEXT7')
+    pending[1]({ list: [{ id: 2, birthday: '01-01' }], total: 41 }); await second
+    pending[0]({ list: [{ id: 1, birthday: '12-31' }], total: 1 }); await first
+    assert.equal(reads[0].path, '/operations/member-birthdays')
+    assert.equal(reads[0].page, 1)
+    assert.equal(reads[1].scope, 'NEXT7')
+    assert.equal(page.rows.value[0].id, 2)
+    page.page.value = 2
+    const next = page.load(); pending[2]({ list: [], total: 41 }); await next
+    assert.equal(reads[2].page, 2)
+    assert.equal(reads[2].scope, 'NEXT7')
+  } finally { page.stop() }
+})
+
+test('会员编辑保存生日或显式清空，不完整月日禁止保存', async () => {
+  const writes = [], page = view({ get: async () => ({ list: [], total: 0 }), put: async (path, body) => writes.push({ path, body: JSON.parse(JSON.stringify(body)) }) })
+  try {
+    await page.open('member', { ...fresh, birthday: '02-29', birthdayVersion: 7 })
+    assert.equal(page.form.birthday, '02-29')
+    page.birthdayInvalid.value = true
+    await page.save(); assert.equal(writes.length, 0)
+    page.birthdayInvalid.value = false
+    await page.save(); assert.equal(writes[0].body.birthday, '02-29')
+    assert.equal(writes[0].body.expectedBirthdayVersion, 7)
+    await page.open('member', { ...fresh, birthday: '02-29' })
+    page.form.birthday = null
+    await page.save(); assert.equal(writes[1].body.birthday, null)
+  } finally { page.stop() }
+})
+
+test('运营看板的生日筛选跳转到会员名单，不改变原看板请求', () => {
+  const page = view({}, 'overview')
+  try { page.selectBirthdays('TODAY'); assert.equal(page.navigations[0].path, '/operations/members'); assert.equal(page.navigations[0].query.birthday, 'TODAY') } finally { page.stop() }
+})
+
+test('生日筛选失败不会把上一范围名单显示在新筛选下', async () => {
+  let fail = false
+  const page = view({ get: async () => { if (fail) throw new Error('网络失败'); return { list: [{ id: 1, birthday: '10-15' }], total: 1 } } })
+  try {
+    await page.selectBirthdays('TODAY'); assert.equal(page.rows.value.length, 1)
+    fail = true
+    await page.selectBirthdays('MISSING')
+    assert.equal(page.birthdayScope.value, 'MISSING')
+    assert.equal(page.rows.value.length, 0)
   } finally { page.stop() }
 })

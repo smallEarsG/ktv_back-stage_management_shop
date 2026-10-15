@@ -1,19 +1,24 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh, User, OfficeBuilding } from '@element-plus/icons-vue'
 import request from '@/lib/request'
 import { useUserStore } from '@/stores/user'
 import { amountText as money, newRequestKey, readOperation, retainOperation, clearOperation, rechargePreview, promotionState, skuLabel } from '@/lib/operations'
 import OperationsPromotionForm from '@/components/OperationsPromotionForm.vue'
+import BirthdayInput from '@/components/BirthdayInput.vue'
+import BirthdayReminder from '@/components/BirthdayReminder.vue'
+import { birthdayCountdown, birthdayScopes, birthdayText } from '@/lib/birthdays'
 
-const route = useRoute(), user = useUserStore()
+const route = useRoute(), router = useRouter(), user = useUserStore()
 const tab = computed(() => route.meta.operationTab || 'overview')
 const admin = computed(() => user.userInfo?.role === 'admin')
 const loading = ref(false), saving = ref(false), error = ref(''), keyword = ref(''), page = ref(1), total = ref(0)
 const rows = ref([]), stats = ref(null), plans = ref([]), records = ref([]), templates = ref([]), skuOptions = ref([])
 const pending = ref(null), recoveryError = ref('')
+const birthdayScope = ref(birthdayScopes.some(scope => scope.value === route.query?.birthday) ? route.query.birthday : '')
+const birthdayRevision = ref(0), birthdayInvalid = ref(false), birthdayEditorKey = ref(0)
 try { pending.value = readOperation(localStorage, user.currentStoreId) } catch (e) { recoveryError.value = e.message }
 const selected = ref(null), detailOpen = ref(false), detail = ref(null), detailTab = ref('wallet')
 const kind = ref(''), dialogOpen = ref(false), form = reactive({}), memberOptions = ref([])
@@ -37,9 +42,11 @@ let generation = 0, dialogGeneration = 0, memberGeneration = 0, detailGeneration
 async function load() {
   const version = ++generation
   loading.value = true; error.value = ''
+  if (tab.value === 'members') { rows.value = []; total.value = 0 }
+  birthdayRevision.value++
   try {
     if (tab.value === 'overview') { const result = await request.get('/operations/dashboard'); if (version === generation) stats.value = result }
-    else if (tab.value === 'members') { const result = await request.get('/operations/members', { params: { keyword: keyword.value, page: page.value, size: 20 } }); if (version === generation) { rows.value = result.list; total.value = result.total } }
+    else if (tab.value === 'members') { const result = await request.get(birthdayScope.value ? '/operations/member-birthdays' : '/operations/members', { params: { keyword: keyword.value, page: page.value, size: 20, ...(birthdayScope.value ? { scope: birthdayScope.value } : {}) } }); if (version === generation) { rows.value = result.list; total.value = result.total } }
     else if (tab.value === 'wallet') {
       const [ledger, rechargePlans, rechargeRecords] = await Promise.all([request.get('/operations/wallet-ledger', { params: { page: page.value, size: 20, keyword: ledgerQuery.keyword, type: ledgerQuery.type, startDate: ledgerQuery.dates?.[0], endDate: ledgerQuery.dates?.[1] } }), request.get('/operations/recharge-plans'), request.get('/operations/recharges')])
       if (version === generation) { rows.value = ledger.list; total.value = ledger.total; plans.value = rechargePlans; records.value = rechargeRecords }
@@ -67,11 +74,13 @@ async function refreshOperationMember(id) {
 async function open(type, row = null, target = null) {
   if ((type === 'recharge' || type === 'adjust') && (pending.value || recoveryError.value)) { ElMessage.warning('请先处理原资金操作'); return }
   const version = ++dialogGeneration; searchGeneration++
+  birthdayInvalid.value = false; birthdayEditorKey.value++
   kind.value = type; formError.value = ''; operationMember.value = null; memberError.value = ''; for (const key of Object.keys(form)) delete form[key]
   const now = new Date(), later = new Date(Date.now() + 30 * 86400000)
   const local = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19)
   const member = target || (detailOpen.value ? selected.value : null)
   Object.assign(form, { name: '', phone: '', remark: '', status: 'ACTIVE', amount: 100, bonus: 0, principal: 0, active: true, type: type === 'activity' ? 'REDUCE' : 'CASH', threshold: 100, giftQty: 1, validDays: 30, totalLimit: 1000, perMemberLimit: type === 'activity' ? 0 : 1, selfClaim: true, audience: 'ALL', channel: 'ALL', stackable: false, skuIds: [], rules: [{ threshold: 300, discount: 30, giftQty: 1 }], startsAt: local(now), endsAt: local(later), requestKey: newRequestKey(), memberId: member?.id, cashReceived: false, poster: { enabled: false, imageUrl: '', priority: 0, buttonText: '' } }, row || {})
+  if (type === 'member') form.birthday = row?.birthday || null
   for (const key of ['active', 'selfClaim', 'stackable']) form[key] = !!form[key]
   if (row?.rules) form.rules = row.rules.map(r => ({ ...r }))
   form.poster = { enabled: false, imageUrl: '', priority: 0, buttonText: '', ...(row?.poster || {}) }; form.poster.enabled = !!form.poster.enabled
@@ -92,11 +101,13 @@ async function recover() { if (saving.value || !pending.value) return; saving.va
 async function save() {
   if (saving.value || dialogLoading.value || memberLoading.value || posterUploading.value) return
   formError.value = ''
+  if (kind.value === 'member' && birthdayInvalid.value) { formError.value = '请把生日的月份和日期选择完整，或清空生日'; return }
   if (['recharge', 'issue', 'adjust'].includes(kind.value) && (!form.memberId || !operationMember.value || memberError.value)) { formError.value = '请先选择会员并确认会员资料'; return }
   if (kind.value === 'recharge' && (operationMember.value.status !== 'ACTIVE' || !form.cashReceived)) { formError.value = operationMember.value.status !== 'ACTIVE' ? '会员已停用，无法充值' : '请确认已收到本次充值现金'; return }
   saving.value = true
   try {
     const b = JSON.parse(JSON.stringify(form)); let path
+    if (kind.value === 'member') b.expectedBirthdayVersion = Number(b.birthdayVersion || 0)
     if (['activity', 'coupon'].includes(kind.value) && b.poster.enabled && !b.poster.imageUrl) throw new Error('开启海报弹窗前，请先上传图片')
     if (kind.value === 'activity' && b.audience === 'ALL') b.perMemberLimit = 0
     if (kind.value === 'member') path = `/operations/members${b.id ? `/${b.id}` : ''}`
@@ -115,6 +126,11 @@ async function save() {
 async function voidCoupon(row) { await ElMessageBox.confirm('作废后会员无法使用这张券，是否继续？', '作废优惠券'); await request.post(`/operations/coupons/${row.id}/void`); await load(); if (selected.value) await inspect(selected.value) }
 function filterLedger() { Object.assign(ledgerQuery, { keyword: ledgerFilters.keyword, type: ledgerFilters.type, dates: [...(ledgerFilters.dates || [])] }); page.value = 1; return load() }
 function resetLedger() { Object.assign(ledgerFilters, { keyword: '', type: '', dates: [] }); filterLedger() }
+function selectBirthdays(scope) {
+  if (tab.value !== 'members') { router.push({ path: '/operations/members', query: scope ? { birthday: scope } : {} }); return }
+  birthdayScope.value = scope; page.value = 1; return load()
+}
+watch(() => route.query?.birthday, scope => { if (tab.value === 'members') selectBirthdays(birthdayScopes.some(item => item.value === scope) ? scope : '') })
 watch(() => form.memberId, id => { if (dialogOpen.value && ['recharge', 'issue', 'adjust'].includes(kind.value)) refreshOperationMember(id) })
 watch(() => [form.memberId, form.planId, recharge.value.amount, recharge.value.bonus], () => { if (kind.value === 'recharge') form.cashReceived = false })
 watch(dialogOpen, value => { if (!value) { dialogGeneration++; memberGeneration++; searchGeneration++; dialogLoading.value = false; memberLoading.value = false; formError.value = '' } })
@@ -133,6 +149,7 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="mb-4" />
     <el-alert v-if="recoveryError" :title="recoveryError" type="error" :closable="false" class="mb-4" />
     <div v-if="pending" class="pending"><div><strong>上次资金操作等待确认</strong><p>请重试原操作，确认结果后再登记新的资金变动。</p></div><el-button :loading="saving" @click="recover">重试原操作</el-button></div>
+    <BirthdayReminder v-if="['overview', 'members'].includes(tab)" :revision="birthdayRevision" :selected="tab === 'overview' ? 'NEXT7' : birthdayScope" :show-list="tab === 'overview'" @select="selectBirthdays" @inspect="inspect" />
     <template v-if="tab === 'overview' && stats">
       <div class="metrics"><article><span>会员总数</span><strong>{{ stats.members }}</strong><small>今日新增 {{ stats.newMembers }} 人</small></article><article><span>累计充值收款</span><strong>¥ {{ money(stats.recharge.amount) }}</strong><small>赠送金额 ¥ {{ money(stats.recharge.bonus) }}</small></article><article><span>钱包总余额</span><strong>¥ {{ money(Number(stats.wallet.principal) + Number(stats.wallet.bonus)) }}</strong><small>本金 {{ money(stats.wallet.principal) }} · 赠金 {{ money(stats.wallet.bonus) }}</small></article><article><span>优惠券核销率</span><strong>{{ stats.coupons.issued ? Math.round(stats.coupons.used / stats.coupons.issued * 100) : 0 }}%</strong><small>已用 {{ stats.coupons.used }} / 已发 {{ stats.coupons.issued }}</small></article></div>
       <div class="metrics secondary"><article><span>活动订单</span><strong>{{ stats.promotion.orders }}</strong></article><article><span>金额优惠合计</span><strong>¥ {{ money(stats.promotion.discount) }}</strong></article><article><span>活动订单净销售</span><strong>¥ {{ money(stats.promotion.netSales) }}</strong></article><article><span>赠品零售价值</span><strong>¥ {{ money(stats.giftCost.retailValue) }}</strong></article></div>
@@ -143,11 +160,12 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
       <el-table :data="rows" class="member-table">
         <el-table-column label="会员" min-width="210"><template #default="{ row }"><div class="member-cell"><span class="member-avatar">{{ (row.name || '会').slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><span class="table-subline">{{ row.phone || '未绑定手机号' }}</span></div></div></template></el-table-column>
         <el-table-column label="钱包余额" min-width="215"><template #default="{ row }"><strong class="amount-primary">¥{{ money(Number(row.principal) + Number(row.bonus)) }}</strong><span class="table-subline">本金 {{ money(row.principal) }} · 赠金 {{ money(row.bonus) }}</span></template></el-table-column>
+        <el-table-column label="生日" min-width="150"><template #default="{ row }">{{ birthdayText(row.birthday) }}<span v-if="row.birthday && row.status === 'ACTIVE'" class="table-subline" :class="{ 'text-orange-600': row.daysUntilBirthday === 0 }">{{ birthdayCountdown(row) }}</span></template></el-table-column>
         <el-table-column label="累计消费" width="140"><template #default="{ row }"><span class="amount-text">¥{{ money(row.consumption) }}</span><span class="table-subline">{{ row.orderCount }} 笔订单</span></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="加入时间" width="160"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column>
         <el-table-column label="操作" :width="admin ? 230 : 80" fixed="right"><template #default="{ row }"><div class="row-actions"><el-button v-if="admin" link type="primary" :disabled="row.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge', null, row)">充值</el-button><el-button v-if="admin" link type="primary" :disabled="row.status !== 'ACTIVE'" @click="open('issue', null, row)">发券</el-button><el-button link type="primary" @click="inspect(row)">详情</el-button><el-button v-if="admin" link @click="open('member', row)">编辑</el-button></div></template></el-table-column>
-        <template #empty><div class="empty-state member-empty"><span class="empty-icon"><el-icon><component :is="keyword ? Search : User" /></el-icon></span><h3>{{ keyword ? '没有找到匹配的会员' : '迎接本店的第一位会员' }}</h3><p>{{ keyword ? '试试手机号、姓名或会员号。' : '顾客可在小程序加入会员，也可由门店手动登记。' }}</p><el-button v-if="admin && !keyword" type="primary" :icon="Plus" @click="open('member')">新增首位会员</el-button></div></template>
+        <template #empty><div class="empty-state member-empty"><span class="empty-icon"><el-icon><component :is="keyword ? Search : User" /></el-icon></span><h3>{{ error ? '会员名单暂未加载' : birthdayScope ? '该生日范围暂无会员' : keyword ? '没有找到匹配的会员' : '迎接本店的第一位会员' }}</h3><p>{{ error ? '请点击刷新重新查询，当前不展示上次的名单。' : birthdayScope ? '可切换其他生日范围，或在会员资料中补充生日。' : keyword ? '试试手机号、姓名或会员号。' : '顾客可在小程序加入会员，也可由门店手动登记。' }}</p><el-button v-if="admin && !keyword && !birthdayScope && !error" type="primary" :icon="Plus" @click="open('member')">新增首位会员</el-button></div></template>
       </el-table>
       <el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="load" />
     </section>
@@ -183,7 +201,7 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
 
     <el-drawer v-model="detailOpen" :title="detail?.name || selected?.name || '会员详情'" size="min(720px, 96vw)">
       <div v-if="!detail" v-loading="true" class="drawer-loading" />
-      <template v-else><div class="member-summary"><div class="member-cell"><span class="member-avatar large">{{ (detail.name || '会').slice(0, 1) }}</span><div><strong>{{ detail.name }}</strong><p>{{ detail.phone || '未绑定手机号' }}</p><el-tag :type="detail.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ statusLabel(detail.status) }}</el-tag></div></div><div class="member-wallet"><small>可用余额</small><strong>¥{{ money(Number(detail.principal) + Number(detail.bonus)) }}</strong><p>本金 {{ money(detail.principal) }} · 赠金 {{ money(detail.bonus) }}</p></div></div><div v-if="admin" class="member-detail-actions"><el-button type="primary" :disabled="detail.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge')">现金充值</el-button><el-button :disabled="detail.status !== 'ACTIVE'" @click="open('issue')">发放优惠券</el-button><el-button :disabled="!!(pending || recoveryError)" @click="open('adjust')">调整余额</el-button></div><el-tabs v-model="detailTab"><el-tab-pane label="钱包流水" name="wallet"><el-table :data="detail.ledger" empty-text="暂无钱包流水"><el-table-column label="类型"><template #default="{ row }">{{ walletType(row.type) }}</template></el-table-column><el-table-column label="金额变动"><template #default="{ row }">{{ money(Number(row.principalDelta) + Number(row.bonusDelta)) }}</template></el-table-column><el-table-column prop="remark" label="说明" /><el-table-column label="时间" width="165"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="优惠券" name="coupons"><el-table :data="detail.coupons" empty-text="暂无优惠券"><el-table-column prop="snapshot.name" label="券名称" /><el-table-column label="状态"><template #default="{ row }">{{ statusLabel(displayStatus(row)) }}</template></el-table-column><el-table-column label="到期时间"><template #default="{ row }">{{ dateText(row.expiresAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="消费订单" name="orders"><el-table :data="detail.orders" empty-text="暂无消费订单"><el-table-column prop="orderNo" label="订单号" min-width="230" /><el-table-column label="实付"><template #default="{ row }">{{ money(row.amountPaid) }}</template></el-table-column><el-table-column label="退款"><template #default="{ row }">{{ money(row.amountRefunded) }}</template></el-table-column></el-table></el-tab-pane></el-tabs></template>
+      <template v-else><div class="member-summary"><div class="member-cell"><span class="member-avatar large">{{ (detail.name || '会').slice(0, 1) }}</span><div><strong>{{ detail.name }}</strong><p>{{ detail.phone || '未绑定手机号' }}</p><p>生日：{{ birthdayText(detail.birthday) }} <span v-if="detail.status === 'ACTIVE'">{{ birthdayCountdown(detail) }}</span></p><el-tag :type="detail.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ statusLabel(detail.status) }}</el-tag></div></div><div class="member-wallet"><small>可用余额</small><strong>¥{{ money(Number(detail.principal) + Number(detail.bonus)) }}</strong><p>本金 {{ money(detail.principal) }} · 赠金 {{ money(detail.bonus) }}</p></div></div><div v-if="admin" class="member-detail-actions"><el-button type="primary" :disabled="detail.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge')">现金充值</el-button><el-button :disabled="detail.status !== 'ACTIVE'" @click="open('issue')">发放优惠券</el-button><el-button :disabled="!!(pending || recoveryError)" @click="open('adjust')">调整余额</el-button></div><el-tabs v-model="detailTab"><el-tab-pane label="钱包流水" name="wallet"><el-table :data="detail.ledger" empty-text="暂无钱包流水"><el-table-column label="类型"><template #default="{ row }">{{ walletType(row.type) }}</template></el-table-column><el-table-column label="金额变动"><template #default="{ row }">{{ money(Number(row.principalDelta) + Number(row.bonusDelta)) }}</template></el-table-column><el-table-column prop="remark" label="说明" /><el-table-column label="时间" width="165"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="优惠券" name="coupons"><el-table :data="detail.coupons" empty-text="暂无优惠券"><el-table-column prop="snapshot.name" label="券名称" /><el-table-column label="状态"><template #default="{ row }">{{ statusLabel(displayStatus(row)) }}</template></el-table-column><el-table-column label="到期时间"><template #default="{ row }">{{ dateText(row.expiresAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="消费订单" name="orders"><el-table :data="detail.orders" empty-text="暂无消费订单"><el-table-column prop="orderNo" label="订单号" min-width="230" /><el-table-column label="实付"><template #default="{ row }">{{ money(row.amountPaid) }}</template></el-table-column><el-table-column label="退款"><template #default="{ row }">{{ money(row.amountRefunded) }}</template></el-table-column></el-table></el-tab-pane></el-tabs></template>
     </el-drawer>
     <el-dialog v-model="dialogOpen" :title="titles[kind]" :width="['coupon', 'activity'].includes(kind) ? 'min(1080px, 96vw)' : 'min(620px, 96vw)'" :close-on-click-modal="false" :close-on-press-escape="!saving && !posterUploading" :show-close="!saving && !posterUploading" class="operations-dialog">
       <el-alert v-if="formError" :title="formError" type="error" show-icon :closable="false" class="mb-4" />
@@ -191,7 +209,7 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
         <OperationsPromotionForm v-if="['coupon', 'activity'].includes(kind)" :kind="kind" :form="form" :sku-options="skuOptions" @poster-uploading="posterUploading = $event" />
         <template v-else>
           <el-form-item v-if="['member', 'plan'].includes(kind)" label="名称" required><el-input v-model="form.name" maxlength="64" :placeholder="kind === 'plan' ? '例如：充500送50' : '输入会员姓名'" /></el-form-item>
-          <template v-if="kind === 'member'"><el-form-item label="手机号" required><el-input v-model="form.phone" :disabled="!!form.id" maxlength="11" placeholder="输入手机号" /></el-form-item><el-form-item label="状态"><el-radio-group v-model="form.status"><el-radio label="ACTIVE">正常</el-radio><el-radio label="FROZEN">停用</el-radio></el-radio-group></el-form-item><el-form-item label="备注"><el-input v-model="form.remark" maxlength="255" type="textarea" placeholder="会员偏好或其他备注" /></el-form-item></template>
+          <template v-if="kind === 'member'"><el-form-item label="手机号" required><el-input v-model="form.phone" :disabled="!!form.id" maxlength="11" placeholder="输入手机号" /></el-form-item><el-form-item label="生日"><BirthdayInput :key="birthdayEditorKey" v-model="form.birthday" @invalid-change="birthdayInvalid = $event" /></el-form-item><el-form-item label="状态"><el-radio-group v-model="form.status"><el-radio label="ACTIVE">正常</el-radio><el-radio label="FROZEN">停用</el-radio></el-radio-group></el-form-item><el-form-item label="备注"><el-input v-model="form.remark" maxlength="255" type="textarea" placeholder="会员偏好或其他备注" /></el-form-item></template>
           <el-form-item v-if="kind === 'recharge' || kind === 'issue'" label="会员" required><el-select v-model="form.memberId" filterable remote :remote-method="searchMembers" placeholder="搜索会员姓名或手机号" class="w-full"><el-option v-for="m in memberOptions" :key="m.id" :value="m.id" :label="`${m.name} ${m.phone || ''}`" :disabled="m.status !== 'ACTIVE'" /></el-select></el-form-item>
           <el-alert v-if="memberError" :title="memberError" type="error" :closable="false" class="mb-4" />
           <template v-if="kind === 'recharge'"><div v-if="operationMember" class="recharge-member"><div><strong>{{ operationMember.name }}</strong><span>{{ operationMember.phone }}</span></div><span>当前余额 <strong>¥{{ money(Number(operationMember.principal) + Number(operationMember.bonus)) }}</strong></span></div><el-form-item label="充值档位"><div class="recharge-choices"><button v-for="p in plans.filter(p => p.active)" :key="p.id" type="button" class="recharge-choice" :class="{ chosen: form.planId === p.id }" :disabled="saving || dialogLoading || !!pending" @click="form.planId = p.id"><strong>充 ¥{{ money(p.amount) }}</strong><span>赠 ¥{{ money(p.bonus) }}</span></button><button type="button" class="recharge-choice" :class="{ chosen: !form.planId }" :disabled="saving || dialogLoading || !!pending" @click="form.planId = null"><strong>自定义</strong><span>填写充值金额</span></button></div></el-form-item></template>
