@@ -17,7 +17,7 @@ function view(request, operationTab = 'members') {
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     ElMessage: { success: () => {}, error: () => {}, warning: () => {} }, ElMessageBox: { confirm: async () => {} } }
   vm.createContext(sandbox)
-  scope.run(() => vm.runInContext(script + '\napi = { open, form, recharge, operationMember, memberOptions, refreshOperationMember, save, memberError, pending, dialogOpen, filterLedger, ledgerFilters, page, load, birthdayScope, birthdayInvalid, selectBirthdays, rows };', sandbox))
+  scope.run(() => vm.runInContext(script + '\napi = { open, form, recharge, operationMember, memberOptions, refreshOperationMember, save, memberError, pending, dialogOpen, filterLedger, ledgerFilters, filterMembers, keyword, memberQuery, page, load, birthdayScope, birthdayInvalid, selectBirthdays, rows };', sandbox))
   return { ...sandbox.api, route, navigations, stop: () => { cleanup.forEach(fn => fn()); scope.stop() } }
 }
 
@@ -96,6 +96,62 @@ test('钱包筛选在查询后应用并重置分页，翻页保留已查询条�
     await page.load()
     assert.equal(reads[1].page, 2)
     assert.equal(reads[1].keyword, '王会员')
+  } finally { page.stop() }
+})
+
+test('会员查询去除首尾空白，未提交的新关键字不会改变翻页和生日范围查询', async () => {
+  const reads = [], page = view({ get: async (path, config) => {
+    reads.push({ path, ...config.params })
+    return { list: [fresh], total: 41 }
+  } })
+  try {
+    page.page.value = 3
+    page.keyword.value = '  王会员  '
+    await page.filterMembers()
+    assert.equal(reads[0].path, '/operations/members')
+    assert.equal(reads[0].page, 1)
+    assert.equal(reads[0].keyword, '王会员')
+    assert.equal(page.memberQuery.value, '王会员')
+
+    page.keyword.value = '尚未查询的手机号'
+    page.page.value = 2
+    await page.load()
+    assert.equal(reads[1].page, 2)
+    assert.equal(reads[1].keyword, '王会员')
+
+    await page.selectBirthdays('NEXT7')
+    assert.equal(reads[2].path, '/operations/member-birthdays')
+    assert.equal(reads[2].page, 1)
+    assert.equal(reads[2].keyword, '王会员')
+    assert.equal(reads[2].scope, 'NEXT7')
+  } finally { page.stop() }
+})
+
+test('清空会员搜索立即恢复当前生日范围的首屏，并忽略清空前的慢响应', async () => {
+  const reads = [], waiting = [], page = view({ get: (path, config) => {
+    reads.push({ path, ...config.params })
+    return new Promise(resolve => waiting.push(resolve))
+  } })
+  try {
+    page.birthdayScope.value = 'TODAY'
+    page.keyword.value = '王会员'
+    const searching = page.filterMembers()
+    page.page.value = 2
+    page.keyword.value = ''
+    const clearing = page.filterMembers()
+    assert.equal(reads.length, 2)
+    assert.equal(reads[1].path, '/operations/member-birthdays')
+    assert.equal(reads[1].keyword, '')
+    assert.equal(reads[1].page, 1)
+    assert.equal(reads[1].scope, 'TODAY')
+    assert.equal(page.memberQuery.value, '')
+
+    waiting[1]({ list: [{ ...fresh, id: 121, name: '今日寿星' }], total: 2 })
+    await clearing
+    waiting[0]({ list: [fresh], total: 1 })
+    await searching
+    assert.equal(page.rows.value[0].id, 121)
+    assert.equal(page.rows.value[0].name, '今日寿星')
   } finally { page.stop() }
 })
 

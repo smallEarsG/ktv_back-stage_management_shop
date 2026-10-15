@@ -9,6 +9,8 @@ import { amountText as money, newRequestKey, readOperation, retainOperation, cle
 import OperationsPromotionForm from '@/components/OperationsPromotionForm.vue'
 import BirthdayInput from '@/components/BirthdayInput.vue'
 import BirthdayReminder from '@/components/BirthdayReminder.vue'
+import MemberActions from '@/components/MemberActions.vue'
+import MemberMobileCard from '@/components/MemberMobileCard.vue'
 import { birthdayCountdown, birthdayScopes, birthdayText } from '@/lib/birthdays'
 
 const route = useRoute(), router = useRouter(), user = useUserStore()
@@ -17,6 +19,7 @@ const admin = computed(() => user.userInfo?.role === 'admin')
 const loading = ref(false), saving = ref(false), error = ref(''), keyword = ref(''), page = ref(1), total = ref(0)
 const rows = ref([]), stats = ref(null), plans = ref([]), records = ref([]), templates = ref([]), skuOptions = ref([])
 const pending = ref(null), recoveryError = ref('')
+const memberQuery = ref('')
 const birthdayScope = ref(birthdayScopes.some(scope => scope.value === route.query?.birthday) ? route.query.birthday : '')
 const birthdayRevision = ref(0), birthdayInvalid = ref(false), birthdayEditorKey = ref(0)
 try { pending.value = readOperation(localStorage, user.currentStoreId) } catch (e) { recoveryError.value = e.message }
@@ -46,7 +49,7 @@ async function load() {
   birthdayRevision.value++
   try {
     if (tab.value === 'overview') { const result = await request.get('/operations/dashboard'); if (version === generation) stats.value = result }
-    else if (tab.value === 'members') { const result = await request.get(birthdayScope.value ? '/operations/member-birthdays' : '/operations/members', { params: { keyword: keyword.value, page: page.value, size: 20, ...(birthdayScope.value ? { scope: birthdayScope.value } : {}) } }); if (version === generation) { rows.value = result.list; total.value = result.total } }
+    else if (tab.value === 'members') { const result = await request.get(birthdayScope.value ? '/operations/member-birthdays' : '/operations/members', { params: { keyword: memberQuery.value, page: page.value, size: 20, ...(birthdayScope.value ? { scope: birthdayScope.value } : {}) } }); if (version === generation) { rows.value = result.list; total.value = result.total } }
     else if (tab.value === 'wallet') {
       const [ledger, rechargePlans, rechargeRecords] = await Promise.all([request.get('/operations/wallet-ledger', { params: { page: page.value, size: 20, keyword: ledgerQuery.keyword, type: ledgerQuery.type, startDate: ledgerQuery.dates?.[0], endDate: ledgerQuery.dates?.[1] } }), request.get('/operations/recharge-plans'), request.get('/operations/recharges')])
       if (version === generation) { rows.value = ledger.list; total.value = ledger.total; plans.value = rechargePlans; records.value = rechargeRecords }
@@ -124,6 +127,7 @@ async function save() {
   finally { saving.value = false }
 }
 async function voidCoupon(row) { await ElMessageBox.confirm('作废后会员无法使用这张券，是否继续？', '作废优惠券'); await request.post(`/operations/coupons/${row.id}/void`); await load(); if (selected.value) await inspect(selected.value) }
+function filterMembers() { memberQuery.value = keyword.value.trim(); page.value = 1; return load() }
 function filterLedger() { Object.assign(ledgerQuery, { keyword: ledgerFilters.keyword, type: ledgerFilters.type, dates: [...(ledgerFilters.dates || [])] }); page.value = 1; return load() }
 function resetLedger() { Object.assign(ledgerFilters, { keyword: '', type: '', dates: [] }); filterLedger() }
 function selectBirthdays(scope) {
@@ -141,7 +145,7 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
 </script>
 
 <template>
-  <div class="operations" v-loading="loading">
+  <div class="operations" :class="{ 'members-page': tab === 'members' }" v-loading="loading">
     <div class="page-head">
       <div><span class="page-kicker">门店运营</span><h1>{{ { overview: '运营看板', members: '会员管理', wallet: '会员钱包', coupons: '优惠券', activities: '营销活动' }[tab] }}</h1><p>{{ { overview: '查看会员增长、充值收入与活动效果', members: '管理会员资料，为顾客充值和发放权益', wallet: '充值套餐、钱包流水与充值记录集中管理', coupons: '配置优惠权益，跟踪领取与使用情况', activities: '设置满减与满额送菜，按单笔订单计算优惠' }[tab] }}</p></div>
       <div class="head-actions"><span class="store-scope"><el-icon><OfficeBuilding /></el-icon>仅限本店</span><el-button :icon="Refresh" @click="load">刷新</el-button><el-button v-if="admin && tab !== 'overview'" type="primary" :icon="Plus" :disabled="tab === 'wallet' && !!(pending || recoveryError)" @click="open({ members: 'member', wallet: 'recharge', coupons: 'coupon', activities: 'activity' }[tab])">{{ { members: '新增会员', wallet: '现金充值', coupons: '创建优惠券', activities: '创建活动' }[tab] }}</el-button></div>
@@ -156,18 +160,21 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
       <section class="panel"><h2>近 30 天充值记录</h2><el-table :data="stats.trend" empty-text="还没有充值记录"><el-table-column prop="day" label="日期" /><el-table-column prop="count" label="充值笔数" /><el-table-column label="充值收款"><template #default="{ row }">¥ {{ money(row.amount) }}</template></el-table-column></el-table><p class="footnote">充值收款单独统计；钱包消费计入订单销售。赠品以零售价值展示。</p></section>
     </template>
     <section v-if="tab === 'members'" class="panel members-panel">
-      <div class="toolbar"><el-input v-model="keyword" :prefix-icon="Search" aria-label="搜索会员" placeholder="搜索手机号、姓名、会员号" clearable @keyup.enter="page = 1; load()" /><el-button type="primary" plain @click="page = 1; load()">查询</el-button><span class="result-count">共 <strong>{{ total }}</strong> 位会员</span></div>
-      <el-table :data="rows" class="member-table">
-        <el-table-column label="会员" min-width="210"><template #default="{ row }"><div class="member-cell"><span class="member-avatar">{{ (row.name || '会').slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><span class="table-subline">{{ row.phone || '未绑定手机号' }}</span></div></div></template></el-table-column>
-        <el-table-column label="钱包余额" min-width="215"><template #default="{ row }"><strong class="amount-primary">¥{{ money(Number(row.principal) + Number(row.bonus)) }}</strong><span class="table-subline">本金 {{ money(row.principal) }} · 赠金 {{ money(row.bonus) }}</span></template></el-table-column>
-        <el-table-column label="生日" min-width="150"><template #default="{ row }">{{ birthdayText(row.birthday) }}<span v-if="row.birthday && row.status === 'ACTIVE'" class="table-subline" :class="{ 'text-orange-600': row.daysUntilBirthday === 0 }">{{ birthdayCountdown(row) }}</span></template></el-table-column>
-        <el-table-column label="累计消费" width="140"><template #default="{ row }"><span class="amount-text">¥{{ money(row.consumption) }}</span><span class="table-subline">{{ row.orderCount }} 笔订单</span></template></el-table-column>
-        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="加入时间" width="160"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column>
-        <el-table-column label="操作" :width="admin ? 230 : 80" fixed="right"><template #default="{ row }"><div class="row-actions"><el-button v-if="admin" link type="primary" :disabled="row.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge', null, row)">充值</el-button><el-button v-if="admin" link type="primary" :disabled="row.status !== 'ACTIVE'" @click="open('issue', null, row)">发券</el-button><el-button link type="primary" @click="inspect(row)">详情</el-button><el-button v-if="admin" link @click="open('member', row)">编辑</el-button></div></template></el-table-column>
-        <template #empty><div class="empty-state member-empty"><span class="empty-icon"><el-icon><component :is="keyword ? Search : User" /></el-icon></span><h3>{{ error ? '会员名单暂未加载' : birthdayScope ? '该生日范围暂无会员' : keyword ? '没有找到匹配的会员' : '迎接本店的第一位会员' }}</h3><p>{{ error ? '请点击刷新重新查询，当前不展示上次的名单。' : birthdayScope ? '可切换其他生日范围，或在会员资料中补充生日。' : keyword ? '试试手机号、姓名或会员号。' : '顾客可在小程序加入会员，也可由门店手动登记。' }}</p><el-button v-if="admin && !keyword && !birthdayScope && !error" type="primary" :icon="Plus" @click="open('member')">新增首位会员</el-button></div></template>
+      <div class="member-list-heading">
+        <div class="member-list-title"><h2>会员列表 <span class="member-count">{{ loading || error ? '—' : total }}</span></h2><p>{{ birthdayScopes.find(scope => scope.value === birthdayScope)?.label || '全部会员' }}<span v-if="memberQuery"> · 搜索“{{ memberQuery }}”</span></p></div>
+        <form class="member-search" role="search" @submit.prevent="filterMembers"><el-input v-model="keyword" :prefix-icon="Search" aria-label="搜索会员" placeholder="手机号、姓名或会员号" clearable @clear="filterMembers" /><el-button type="primary" native-type="submit">查询</el-button></form>
+      </div>
+      <el-table v-if="rows.length" :data="rows" class="member-table">
+        <el-table-column label="会员信息" min-width="210"><template #default="{ row }"><div class="member-cell"><span class="member-avatar" aria-hidden="true">{{ Array.from(row.name || '会')[0] }}</span><div class="member-contact"><div class="member-name-line"><strong :title="row.name">{{ row.name || '未填写姓名' }}</strong><span class="member-status" :class="{ inactive: row.status !== 'ACTIVE' }">{{ statusLabel(row.status) }}</span></div><span class="table-subline">{{ row.phone || '未绑定手机号' }}</span></div></div></template></el-table-column>
+        <el-table-column label="钱包余额" min-width="180"><template #default="{ row }"><strong class="amount-primary">¥{{ money(Number(row.principal) + Number(row.bonus)) }}</strong><span class="table-subline">本金 {{ money(row.principal) }} · 赠金 {{ money(row.bonus) }}</span></template></el-table-column>
+        <el-table-column label="累计消费" min-width="120"><template #default="{ row }"><span class="amount-text">¥{{ money(row.consumption) }}</span><span class="table-subline">{{ row.orderCount || 0 }} 笔订单</span></template></el-table-column>
+        <el-table-column label="会员生日" min-width="140"><template #default="{ row }"><template v-if="row.birthday"><span class="birthday-date">{{ birthdayText(row.birthday) }}</span><span v-if="row.status === 'ACTIVE'" class="table-subline birthday-countdown" :class="{ 'is-today': row.daysUntilBirthday === 0 }">{{ birthdayCountdown(row) }}</span></template><el-button v-else-if="admin" link type="primary" class="register-birthday" @click="open('member', row)">登记生日 +</el-button><span v-else class="muted">未登记</span></template></el-table-column>
+        <el-table-column label="加入日期" width="120"><template #default="{ row }"><span class="member-joined">{{ row.createdAt ? String(row.createdAt).slice(0, 10) : '—' }}</span></template></el-table-column>
+        <el-table-column label="操作" :width="admin ? 190 : 85" fixed="right"><template #default="{ row }"><MemberActions :member="row" :admin="admin" :financial-blocked="!!(pending || recoveryError)" @detail="inspect(row)" @recharge="open('recharge', null, row)" @issue="open('issue', null, row)" @edit="open('member', row)" /></template></el-table-column>
       </el-table>
-      <el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="load" />
+      <div v-if="rows.length" class="member-mobile-list"><MemberMobileCard v-for="member in rows" :key="member.id" :member="member" :admin="admin" :financial-blocked="!!(pending || recoveryError)" @detail="inspect(member)" @recharge="open('recharge', null, member)" @issue="open('issue', null, member)" @edit="open('member', member)" /></div>
+      <div v-if="!rows.length" class="empty-state member-empty" role="status"><span class="empty-icon"><el-icon><component :is="memberQuery ? Search : User" /></el-icon></span><h3>{{ loading ? '正在加载会员' : error ? '会员名单暂未加载' : memberQuery ? '没有找到匹配的会员' : birthdayScope ? '该生日范围暂无会员' : '迎接本店的第一位会员' }}</h3><p>{{ loading ? '请稍候，正在查询本店会员资料。' : error === '门店不存在' ? '当前账号未关联可用门店，请切换门店账号或联系平台管理员。' : error ? '请重试查询，稍后即可继续查看会员资料。' : memberQuery ? '试试其他手机号、姓名或会员号。' : birthdayScope ? '可切换其他生日范围，或在会员资料中补充生日。' : '顾客可在小程序加入会员，也可由门店手动登记。' }}</p><el-button v-if="error" :icon="Refresh" @click="load">重新加载</el-button><el-button v-else-if="!loading && (memberQuery || birthdayScope)" @click="keyword = ''; memberQuery = ''; selectBirthdays('')">查看全部会员</el-button><el-button v-else-if="admin && !loading" type="primary" :icon="Plus" @click="open('member')">新增首位会员</el-button></div>
+      <div v-if="!error && total" class="member-pagination"><span>每页 20 位会员</span><el-pagination v-model:current-page="page" :total="total" :page-size="20" :pager-count="5" layout="prev, pager, next" @current-change="load" /></div>
     </section>
     <section v-if="tab === 'wallet'" class="panel">
       <el-tabs v-model="walletTab" class="section-tabs">
@@ -199,9 +206,9 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
       <p class="footnote">满减活动与一张优惠券互斥；满赠可设置叠加。退款按实付金额计算，赠品无需退回。</p>
     </section>
 
-    <el-drawer v-model="detailOpen" :title="detail?.name || selected?.name || '会员详情'" size="min(720px, 96vw)">
+    <el-drawer v-model="detailOpen" title="会员详情" size="min(720px, 96vw)">
       <div v-if="!detail" v-loading="true" class="drawer-loading" />
-      <template v-else><div class="member-summary"><div class="member-cell"><span class="member-avatar large">{{ (detail.name || '会').slice(0, 1) }}</span><div><strong>{{ detail.name }}</strong><p>{{ detail.phone || '未绑定手机号' }}</p><p>生日：{{ birthdayText(detail.birthday) }} <span v-if="detail.status === 'ACTIVE'">{{ birthdayCountdown(detail) }}</span></p><el-tag :type="detail.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ statusLabel(detail.status) }}</el-tag></div></div><div class="member-wallet"><small>可用余额</small><strong>¥{{ money(Number(detail.principal) + Number(detail.bonus)) }}</strong><p>本金 {{ money(detail.principal) }} · 赠金 {{ money(detail.bonus) }}</p></div></div><div v-if="admin" class="member-detail-actions"><el-button type="primary" :disabled="detail.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge')">现金充值</el-button><el-button :disabled="detail.status !== 'ACTIVE'" @click="open('issue')">发放优惠券</el-button><el-button :disabled="!!(pending || recoveryError)" @click="open('adjust')">调整余额</el-button></div><el-tabs v-model="detailTab"><el-tab-pane label="钱包流水" name="wallet"><el-table :data="detail.ledger" empty-text="暂无钱包流水"><el-table-column label="类型"><template #default="{ row }">{{ walletType(row.type) }}</template></el-table-column><el-table-column label="金额变动"><template #default="{ row }">{{ money(Number(row.principalDelta) + Number(row.bonusDelta)) }}</template></el-table-column><el-table-column prop="remark" label="说明" /><el-table-column label="时间" width="165"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="优惠券" name="coupons"><el-table :data="detail.coupons" empty-text="暂无优惠券"><el-table-column prop="snapshot.name" label="券名称" /><el-table-column label="状态"><template #default="{ row }">{{ statusLabel(displayStatus(row)) }}</template></el-table-column><el-table-column label="到期时间"><template #default="{ row }">{{ dateText(row.expiresAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="消费订单" name="orders"><el-table :data="detail.orders" empty-text="暂无消费订单"><el-table-column prop="orderNo" label="订单号" min-width="230" /><el-table-column label="实付"><template #default="{ row }">{{ money(row.amountPaid) }}</template></el-table-column><el-table-column label="退款"><template #default="{ row }">{{ money(row.amountRefunded) }}</template></el-table-column></el-table></el-tab-pane></el-tabs></template>
+      <template v-else><div class="member-summary"><div class="member-cell"><span class="member-avatar large">{{ (detail.name || '会').slice(0, 1) }}</span><div><strong>{{ detail.name }}</strong><p>{{ detail.phone || '未绑定手机号' }}</p><p class="member-number">会员号：{{ detail.memberNo || '—' }}</p><p>生日：{{ birthdayText(detail.birthday) }} <span v-if="detail.status === 'ACTIVE'">{{ birthdayCountdown(detail) }}</span></p><el-tag :type="detail.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ statusLabel(detail.status) }}</el-tag></div></div><div class="member-wallet"><small>可用余额</small><strong>¥{{ money(Number(detail.principal) + Number(detail.bonus)) }}</strong><p>本金 {{ money(detail.principal) }} · 赠金 {{ money(detail.bonus) }}</p></div></div><div v-if="admin" class="member-detail-actions"><el-button type="primary" :disabled="detail.status !== 'ACTIVE' || !!(pending || recoveryError)" @click="open('recharge')">现金充值</el-button><el-button :disabled="detail.status !== 'ACTIVE'" @click="open('issue')">发放优惠券</el-button><el-button :disabled="!!(pending || recoveryError)" @click="open('adjust')">调整余额</el-button></div><el-tabs v-model="detailTab"><el-tab-pane label="钱包流水" name="wallet"><el-table :data="detail.ledger" empty-text="暂无钱包流水"><el-table-column label="类型"><template #default="{ row }">{{ walletType(row.type) }}</template></el-table-column><el-table-column label="金额变动"><template #default="{ row }">{{ money(Number(row.principalDelta) + Number(row.bonusDelta)) }}</template></el-table-column><el-table-column prop="remark" label="说明" /><el-table-column label="时间" width="165"><template #default="{ row }">{{ dateText(row.createdAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="优惠券" name="coupons"><el-table :data="detail.coupons" empty-text="暂无优惠券"><el-table-column prop="snapshot.name" label="券名称" /><el-table-column label="状态"><template #default="{ row }">{{ statusLabel(displayStatus(row)) }}</template></el-table-column><el-table-column label="到期时间"><template #default="{ row }">{{ dateText(row.expiresAt) }}</template></el-table-column></el-table></el-tab-pane><el-tab-pane label="消费订单" name="orders"><el-table :data="detail.orders" empty-text="暂无消费订单"><el-table-column prop="orderNo" label="订单号" min-width="230" /><el-table-column label="实付"><template #default="{ row }">{{ money(row.amountPaid) }}</template></el-table-column><el-table-column label="退款"><template #default="{ row }">{{ money(row.amountRefunded) }}</template></el-table-column></el-table></el-tab-pane></el-tabs></template>
     </el-drawer>
     <el-dialog v-model="dialogOpen" :title="titles[kind]" :width="['coupon', 'activity'].includes(kind) ? 'min(1080px, 96vw)' : 'min(620px, 96vw)'" :close-on-click-modal="false" :close-on-press-escape="!saving && !posterUploading" :show-close="!saving && !posterUploading" class="operations-dialog">
       <el-alert v-if="formError" :title="formError" type="error" show-icon :closable="false" class="mb-4" />
@@ -249,84 +256,58 @@ onBeforeUnmount(() => { generation++; dialogGeneration++; memberGeneration++; de
 .member-empty .el-button--primary {
   box-shadow: 0 3px 8px #2563eb14;
 }
-.members-panel {
-  padding: 24px;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px #0f172a03;
+.members-page .page-head { margin-bottom: 22px; }
+.members-panel { padding: 0; overflow: hidden; }
+.member-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px; }
+.member-list-title { min-width: 0; }
+.member-list-title h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 15px; }
+.member-count { display: inline-block; padding: 2px 8px; border-radius: 6px; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 500; }
+.member-list-title p { margin-top: 6px; color: #94a3b8; font-size: 11px; overflow-wrap: anywhere; }
+.member-search { display: flex; flex: 0 1 370px; gap: 9px; min-width: 0; }
+.member-search :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px #e2e8f0 inset; border-radius: 7px; }
+.member-search :deep(.el-input__prefix) { color: #94a3b8; }
+.member-table :deep(th.el-table__cell) { border-top: 1px solid #f1f5f9; }
+.member-table :deep(.cell) { padding-right: 18px; padding-left: 18px; }
+.member-table :deep(.el-table__row:last-child td) { border-bottom: 0; }
+.member-contact { min-width: 0; flex: 1; }
+.member-name-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.member-name-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.member-status { flex-shrink: 0; padding: 2px 5px; border-radius: 4px; background: #f0fdf4; color: #15803d; font-size: 10px; line-height: 1.5; }
+.member-status.inactive { background: #f1f5f9; color: #94a3b8; }
+.member-table .table-subline { font-size: 11px; color: #94a3b8; }
+.member-table .amount-primary { font-size: 16px; }
+.member-joined,.birthday-date { color: #475569; font-size: 12px; }
+.member-table .birthday-countdown.is-today { display: inline-block; padding: 1px 5px; border-radius: 4px; background: #fff7ed; color: #b45309; font-size: 10px; }
+.register-birthday { font-size: 12px; font-weight: 400; }
+.muted { color: #94a3b8; font-size: 12px; }
+.member-mobile-list { display: none; }
+.member-empty { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; border-top: 1px solid #f1f5f9; }
+.member-empty p { max-width: 360px; }
+.member-pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 22px; border-top: 1px solid #f1f5f9; }
+.member-pagination>span { flex-shrink: 0; font-size: 11px; color: #94a3b8; }
+.member-pagination :deep(.el-pagination) { margin-top: 0; flex-wrap: wrap; }
+.member-summary .member-cell { min-width: 0; flex: 1; }
+.member-summary .member-cell>div { min-width: 0; }
+.member-summary strong,.member-number { overflow-wrap: anywhere; }
+.member-number { color: #94a3b8; font-size: 10px; }
+@media (max-width: 1240px) {
+  .members-page .page-head { margin-bottom: 18px; gap: 14px; }
+  .members-page .page-head h1 { font-size: 23px; }
+  .members-page .page-head p { font-size: 12px; }
+  .members-page .head-actions { gap: 8px; }
+  .members-page .head-actions .store-scope { font-size: 10px; padding: 5px 7px; }
+  .members-panel { padding: 0; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+  .member-list-heading { flex-direction: column; align-items: stretch; gap: 14px; padding: 2px 0 16px; }
+  .member-list-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .member-list-title p { margin: 0; text-align: right; }
+  .member-search { flex-basis: auto; width: 100%; }
+  .member-search :deep(.el-input) { min-width: 0; }
+  .member-table { display: none; }
+  .member-mobile-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  .member-empty { min-height: 280px; padding: 35px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: white; }
+  .member-pagination { padding: 16px 0 0; border: 0; flex-wrap: wrap; justify-content: center; }
+  .member-pagination>span { width: 100%; text-align: center; }
+  .member-pagination :deep(.el-pagination) { justify-content: center; max-width: 100%; --el-pagination-button-width: 28px; }
 }
-.members-panel .toolbar {
-  gap: 10px;
-  margin-bottom: 22px;
-}
-.members-panel .toolbar .el-input {
-  max-width: 360px;
-}
-.members-panel .toolbar :deep(.el-input__wrapper) {
-  min-height: 38px;
-  padding-right: 12px;
-  padding-left: 12px;
-}
-.members-panel .toolbar :deep(.el-input__prefix) {
-  color: #94a3b8;
-}
-.members-panel .result-count {
-  color: #64748b;
-  font-size: 13px;
-}
-.members-panel .result-count strong {
-  margin: 0 3px;
-  color: #334155;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.member-table :deep(th.el-table__cell) {
-  color: #475569;
-  font-weight: 600;
-}
-.member-table :deep(.el-table__empty-block) {
-  min-height: 320px;
-}
-.member-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 56px 20px;
-}
-.member-empty .empty-icon {
-  width: 64px;
-  height: 64px;
-  margin-bottom: 20px;
-  border: 1px solid #dbeafe;
-  border-radius: 20px;
-  background: linear-gradient(145deg, #eff6ff, #f8fafc);
-  color: #3b82f6;
-  font-size: 28px;
-}
-.member-empty h3 {
-  margin-bottom: 8px;
-  color: #334155;
-  font-size: 16px;
-}
-.member-empty p {
-  max-width: 360px;
-  color: #64748b;
-  font-size: 13px;
-}
-.member-empty .el-button {
-  margin-top: 24px;
-}
-.members-panel :deep(.el-pagination) {
-  min-height: 34px;
-  margin-top: 18px;
-  flex-wrap: wrap;
-  row-gap: 8px;
-}
-@media (max-width: 750px) {
-  .members-panel { padding: 16px; }
-  .members-panel .toolbar .el-input { flex: 1; max-width: none; }
-  .members-panel .toolbar .result-count { width: 100%; margin-left: 0; }
-  .member-empty { padding: 44px 16px; }
-  .member-table :deep(.el-table-fixed-column--right) { position: static !important; }
-  .member-table :deep(.el-table-fixed-column--right::before) { box-shadow: none; }
-}
+@media (max-width: 900px) { .member-mobile-list { grid-template-columns: minmax(0,1fr); } }
 </style>
