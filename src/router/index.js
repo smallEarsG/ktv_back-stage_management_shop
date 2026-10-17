@@ -1,8 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import AppLayout from '@/layouts/AppLayout.vue'
+import AppLayout from '@/layouts/CommerceLayout.vue'
 import Login from '@/views/Login.vue'
 import { useUserStore } from '@/stores/user'
 import { routeProduct } from '@/lib/products'
+import { insightPermissions } from '@/lib/business'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -22,11 +23,13 @@ const router = createRouter({
     {
       path: '/',
       component: AppLayout,
-      redirect: '/services',
+      redirect: '/overview',
       children: [
+        ...[{ path: 'overview', tab: 'overview', title: '经营总览', permission: insightPermissions }, { path: 'reports', tab: 'report', title: '经营报表', permission: ['dashboard:view', 'finance:view'] }, { path: 'reports/ledger', tab: 'ledger', title: '订单资金明细', permission: 'finance:view' }, { path: 'reports/shared', tab: 'shared', title: '会员与库存概览', permission: ['operations:view', 'warehouse:view'] }].map(item => ({ path: item.path, name: `Commerce-${item.tab}`, component: () => import('@/views/commerce/CommerceReport.vue'), meta: { title: item.title, requiresAuth: true, permission: item.permission, insightTab: item.tab } })),
+        { path: 'mall/report', redirect: { path: '/reports', query: { business: 'MALL' } } },
         { path: 'services', name: 'ProductServices', component: () => import('@/views/ProductServices.vue'), meta: { title: '已购服务', requiresAuth: true } },
-        ...['products', 'orders', 'aftersales', 'settings', 'report'].map(tab => ({ path: `mall/${tab}`, name: `Mall-${tab}`, component: () => import('@/views/mall/MallConsole.vue'), meta: { title: { products: '商城商品', orders: '商城订单', aftersales: '商城售后', settings: '商城设置', report: '商城报表' }[tab], requiresAuth: true, mallTab: tab, permission: { products: 'product:view', orders: 'order:view', aftersales: ['refund:view', 'refund:approve'], settings: 'settings:view', report: 'finance:view' }[tab] } })),
-        ...['members', 'shipping', 'batch', 'sharing'].map(tab => ({ path: `mall/${tab}`, name: `Mall-growth-${tab}`, component: () => import('@/views/mall/MallGrowth.vue'), meta: { title: { members: '会员与营销', shipping: '配送与物流', batch: '批量工作台', sharing: '共享设置' }[tab], requiresAuth: true, mallGrowth: tab, permission: { members: 'operations:view', shipping: 'settings:view', batch: ['product:view', 'order:view', 'finance:view'], sharing: 'settings:view' }[tab] } })),
+        ...['products', 'orders', 'aftersales', 'settings'].map(tab => ({ path: `mall/${tab}`, name: `Mall-${tab}`, component: () => import('@/views/mall/MallConsole.vue'), meta: { title: { products: '商城商品', orders: '商城订单', aftersales: '商城售后', settings: '商城设置' }[tab], requiresAuth: true, mallTab: tab, permission: { products: 'product:view', orders: 'order:view', aftersales: ['refund:view', 'refund:approve'], settings: 'settings:view' }[tab] } })),
+        ...['members', 'member-rules', 'coupons', 'shipping', 'batch', 'sharing'].map(tab => ({ path: `mall/${tab}`, name: `Mall-growth-${tab}`, component: () => import('@/views/mall/MallGrowth.vue'), meta: { title: { members: '商城会员', 'member-rules': '会员规则与等级', coupons: '商城优惠券', shipping: '配送与物流', batch: '批量工作台', sharing: '共享设置' }[tab], requiresAuth: true, mallGrowth: tab, permission: { members: 'operations:view', 'member-rules': 'operations:view', coupons: 'operations:view', shipping: 'settings:view', batch: ['product:view', 'order:view', 'finance:view'], sharing: 'settings:view' }[tab] } })),
         { path: 'mall', redirect: '/mall/orders' },
         { path: 'account/security', name: 'AccountSecurity', component: () => import('@/views/AccountSecurity.vue'), meta: { title: '修改密码', requiresAuth: true } },
         ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({

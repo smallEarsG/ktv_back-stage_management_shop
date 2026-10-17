@@ -7,6 +7,7 @@ import { useUserStore } from '@/stores/user'
 import QRCode from 'qrcode'
 import ResetStaffPassword from '@/components/ResetStaffPassword.vue'
 import MerchantAudit from '@/components/MerchantAudit.vue'
+import { scopePermissions, businessLabels } from '@/lib/business'
 
 const activeTab = ref('store')
 const userStore = useUserStore()
@@ -194,6 +195,8 @@ const submitEditProfile = async () => {
 }
 
 const permissionDialogVisible = ref(false)
+const permissionBusinesses = ref([])
+const assignableBusinesses = computed(() => ['DINING', 'MALL'].filter(userStore.canAccessProduct))
 const permissionForm = reactive({
   id: '',
   role: 'staff',
@@ -217,7 +220,7 @@ const availablePermissions = [
   { label: '门店设置', value: 'settings:view' },
   { label: '编辑点餐／商城设置', value: 'settings:edit' }
 ]
-const visiblePermissions = computed(() => availablePermissions.filter(item => diningAvailable.value || !['dining:view', 'dining:manage', 'kitchen:operate', 'service:operate', 'dashboard:view', 'pos:view', 'workbench:view', 'operations:view'].includes(item.value)))
+const visiblePermissions = computed(() => availablePermissions.filter(item => diningAvailable.value || !['dining:view', 'dining:manage', 'kitchen:operate', 'service:operate', 'pos:view', 'workbench:view'].includes(item.value)))
 
 const handlePermissionSet = (row) => {
   const currentUser = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
@@ -233,7 +236,9 @@ const handlePermissionSet = (row) => {
 
   permissionForm.id = row.id
   permissionForm.role = row.role
-  permissionForm.permissions = row.permissions || [] // Assuming API returns permissions array
+  const previous = row.permissions || []
+  permissionBusinesses.value = assignableBusinesses.value.filter(type => !previous.includes('business:scoped') || previous.includes(`business:${type}`))
+  permissionForm.permissions = previous.filter(value => !value.startsWith('business:'))
   permissionDialogVisible.value = true
 }
 
@@ -241,7 +246,7 @@ const submitPermission = async () => {
   try {
     await request.put(`/users/${permissionForm.id}/role`, {
       role: permissionForm.role,
-      permissions: permissionForm.permissions
+      permissions: scopePermissions(permissionForm.permissions, permissionBusinesses.value)
     })
     ElMessage.success('权限更新成功')
     permissionDialogVisible.value = false
@@ -626,13 +631,16 @@ watch(activeTab, (val) => {
         </el-dialog>
 
         <!-- Permission Dialog -->
-        <el-dialog v-model="permissionDialogVisible" title="权限设置" width="600px">
+        <el-dialog v-model="permissionDialogVisible" title="员工业务与操作权限" width="min(660px, 94vw)">
           <el-form label-width="80px">
             <el-form-item label="角色">
               <el-radio-group v-model="permissionForm.role">
                 <el-radio label="staff">员工</el-radio>
 
               </el-radio-group>
+            </el-form-item>
+            <el-form-item label="业务范围">
+              <div><el-checkbox-group v-model="permissionBusinesses"><el-checkbox v-for="type in assignableBusinesses" :key="type" :label="type">{{ businessLabels[type] }}</el-checkbox></el-checkbox-group><p class="text-xs text-slate-400 mt-2">选择员工负责的业务，再选择可执行的操作。未选择业务时仅保留已授权的公共管理功能。</p></div>
             </el-form-item>
             <el-form-item label="功能权限">
               <el-checkbox-group v-model="permissionForm.permissions">

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import request from '@/lib/request'
 import { authStorage } from '@/lib/auth-storage'
 import { findProduct, productAccessible, productTradable, firstProductPath } from '@/lib/products'
+import { businessAllowed } from '@/lib/business'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(authStorage.getItem('token'))
@@ -36,9 +37,9 @@ export const useUserStore = defineStore('user', () => {
     }
   }
   const product = type => findProduct(products.value, type)
-  const canAccessProduct = type => productsReady.value && productAccessible(product(type))
-  const canTradeProduct = type => productsReady.value && productTradable(product(type))
-  const homePath = () => firstProductPath(products.value, hasPermission)
+  const canAccessProduct = type => productsReady.value && productAccessible(product(type)) && businessAllowed(userInfo.value?.role, permissions.value, type)
+  const canTradeProduct = type => canAccessProduct(type) && productTradable(product(type))
+  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), hasPermission)
 
   let lastRefresh = 0
   async function refresh(force = false) {

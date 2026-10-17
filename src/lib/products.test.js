@@ -4,10 +4,10 @@ import { firstProductPath, productAccessible, productTradable, routeProduct } fr
 
 test('mall-only merchant never enters a dining workbench and respects staff permissions', () => {
   const products = [{ productType: 'DINING', historyAccessible: false, canTrade: false }, { productType: 'MALL', historyAccessible: true, canTrade: true }]
-  assert.equal(firstProductPath(products, () => true), '/mall/orders')
-  assert.equal(firstProductPath(products, value => value === 'finance:view'), '/mall/report')
+  assert.equal(firstProductPath(products, () => true), '/overview?business=MALL')
+  assert.equal(firstProductPath(products, value => value === 'finance:view'), '/overview?business=MALL')
   assert.equal(firstProductPath(products, () => false), '/services')
-  assert.equal(firstProductPath([{ productType: 'DINING', historyAccessible: true, canTrade: false }, ...products.slice(1)], () => true), '/mall/orders')
+  assert.equal(firstProductPath([{ productType: 'DINING', historyAccessible: true, canTrade: false }, ...products.slice(1)], () => true), '/overview')
 })
 test('expired or revoked products preserve historical access only when explicitly allowed by server', () => {
   const product = { granted: false, status: 'EXPIRED', historyAccessible: true, canTrade: false }

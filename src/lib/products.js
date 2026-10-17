@@ -10,6 +10,9 @@ const diningHomes = [
 ]
 const mallHomes = [['/mall/orders', 'order:view'], ['/mall/products', 'product:view'], ['/mall/aftersales', ['refund:view', 'refund:approve']], ['/mall/report', 'finance:view'], ['/mall/settings', 'settings:view']]
 export function firstProductPath(products, hasPermission) {
+  const accessible = products.filter(productAccessible)
+  const overviewPermissions = ['dashboard:view', 'finance:view', 'order:view', 'workbench:view', 'pos:view', 'refund:view', 'refund:approve', 'warehouse:view', 'operations:view', 'product:view', 'kitchen:operate', 'service:operate', 'dining:view']
+  if (accessible.length && overviewPermissions.some(hasPermission)) return accessible.length > 1 ? '/overview' : `/overview?business=${accessible[0].productType}`
   const choices = [['DINING', diningHomes], ['MALL', mallHomes]]
   choices.sort(([a], [b]) => Number(productTradable(findProduct(products, b))) - Number(productTradable(findProduct(products, a))))
   for (const [type, homes] of choices) {
@@ -20,6 +23,7 @@ export function firstProductPath(products, hasPermission) {
   return '/services'
 }
 export function routeProduct(path) {
+  if (path === '/overview' || path === '/reports' || path.startsWith('/reports/')) return null
   if (path === '/mall' || path.startsWith('/mall/')) return 'MALL'
   if (path === '/' || path === '/login' || path === '/403' || path === '/services' || path === '/settings' || path.startsWith('/account/')) return null
   return 'DINING'
