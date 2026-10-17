@@ -35,6 +35,10 @@ const menuItems = [
     { path: '/mall/orders', label: '商城订单', permission: 'order:view' },
     { path: '/mall/aftersales', label: '退款退货', permission: ['refund:view', 'refund:approve'] },
     { path: '/mall/settings', label: '商城设置', permission: 'settings:view' },
+    { path: '/mall/members', label: '会员与营销', permission: 'operations:view' },
+    { path: '/mall/shipping', label: '配送与物流', permission: 'settings:view' },
+    { path: '/mall/batch', label: '批量工作台', permission: ['product:view', 'order:view', 'finance:view'] },
+    { path: '/mall/sharing', label: '共享设置', permission: 'settings:view' },
     { path: '/mall/report', label: '商城报表', permission: 'finance:view' }
   ] },
   { path: '/dining', icon: Shop, label: '点餐营业', permission: 'dining:view', children: [

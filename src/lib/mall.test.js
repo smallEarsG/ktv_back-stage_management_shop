@@ -4,12 +4,13 @@ import vm from 'node:vm'
 import { test } from 'node:test'
 import { computed, reactive, ref } from 'vue'
 import * as helpers from './mall.js'
+import { canReleaseMallIntent } from './mall2.js'
 
 const memory = () => { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } }
 const op = () => ({ path: '/skus/12/stock', body: { requestKey: 'original-key', expectedVersion: 1, delta: 2, reason: '盘点' }, targetId: 12, label: '库存调整', createdAt: '2026-10-17T00:00:00Z' })
 function page(request = {}, storage = memory(), tab = 'orders') {
   const user = { currentStoreId: 1, userInfo: { id: 9 }, product: () => ({ application: { id: 7 } }), canTradeProduct: () => true, hasPermission: () => true }
-  const sandbox = { ...helpers, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
+  const sandbox = { ...helpers, canReleaseMallIntent, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
   vm.createContext(sandbox)
   const source = fs.readFileSync(new URL('../views/mall/MallConsole.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   vm.runInContext(source + '\napi = { load, loadCapabilities, perform, recover, open, submit, form, editor, editorUncertain, rows, error, pending, recoveryError, capabilities, capabilityError };', sandbox)

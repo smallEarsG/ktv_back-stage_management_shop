@@ -18,6 +18,7 @@ service.interceptors.response.use(response => {
   if (!response.config.silent) ElMessage.error(result.message || '请求失败，请重试')
   if (result.code === 401) useUserStore().logout()
   const error = new Error(result.message || '请求失败')
+  error.code = result.code; error.statusCode = response.status
   error.definitive = [400, 401, 403, 409, 422].includes(result.code)
   return Promise.reject(error)
 }, error => {

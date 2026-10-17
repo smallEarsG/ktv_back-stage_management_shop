@@ -26,6 +26,7 @@ const router = createRouter({
       children: [
         { path: 'services', name: 'ProductServices', component: () => import('@/views/ProductServices.vue'), meta: { title: '已购服务', requiresAuth: true } },
         ...['products', 'orders', 'aftersales', 'settings', 'report'].map(tab => ({ path: `mall/${tab}`, name: `Mall-${tab}`, component: () => import('@/views/mall/MallConsole.vue'), meta: { title: { products: '商城商品', orders: '商城订单', aftersales: '商城售后', settings: '商城设置', report: '商城报表' }[tab], requiresAuth: true, mallTab: tab, permission: { products: 'product:view', orders: 'order:view', aftersales: ['refund:view', 'refund:approve'], settings: 'settings:view', report: 'finance:view' }[tab] } })),
+        ...['members', 'shipping', 'batch', 'sharing'].map(tab => ({ path: `mall/${tab}`, name: `Mall-growth-${tab}`, component: () => import('@/views/mall/MallGrowth.vue'), meta: { title: { members: '会员与营销', shipping: '配送与物流', batch: '批量工作台', sharing: '共享设置' }[tab], requiresAuth: true, mallGrowth: tab, permission: { members: 'operations:view', shipping: 'settings:view', batch: ['product:view', 'order:view', 'finance:view'], sharing: 'settings:view' }[tab] } })),
         { path: 'mall', redirect: '/mall/orders' },
         { path: 'account/security', name: 'AccountSecurity', component: () => import('@/views/AccountSecurity.vue'), meta: { title: '修改密码', requiresAuth: true } },
         ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({
