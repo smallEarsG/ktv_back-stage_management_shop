@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import request from '@/lib/request'
 import { authStorage } from '@/lib/auth-storage'
+import { findProduct, productAccessible, productTradable, firstProductPath } from '@/lib/products'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(authStorage.getItem('token'))
@@ -18,7 +19,26 @@ export const useUserStore = defineStore('user', () => {
 
   const userInfo = ref(storedUserInfo)
   const permissions = ref(userInfo.value?.permissions || []) 
+  const products = ref([]), productsReady = ref(false), productsError = ref('')
+  let productsRefresh = 0, productGeneration = 0
   const router = useRouter()
+
+  async function refreshProducts(force = false) {
+    if (!token.value || (!force && productsReady.value && Date.now() - productsRefresh < 30000)) return
+    const generation = ++productGeneration
+    try {
+      const data = await request.get('/auth/products', { silent: true })
+      if (generation !== productGeneration || !token.value) return
+      if (!Array.isArray(data?.products)) throw new Error('未取得产品授权，请重新查询')
+      products.value = data.products; productsReady.value = true; productsError.value = ''; productsRefresh = Date.now()
+    } catch (e) {
+      if (generation === productGeneration) { products.value = []; productsReady.value = false; productsError.value = e.message || '产品授权暂时无法查询，请重试' }
+    }
+  }
+  const product = type => findProduct(products.value, type)
+  const canAccessProduct = type => productsReady.value && productAccessible(product(type))
+  const canTradeProduct = type => productsReady.value && productTradable(product(type))
+  const homePath = () => firstProductPath(products.value, hasPermission)
 
   let lastRefresh = 0
   async function refresh(force = false) {
@@ -58,6 +78,8 @@ export const useUserStore = defineStore('user', () => {
       
       authStorage.setItem('token', accessToken)
       authStorage.setItem('userInfo', JSON.stringify(user))
+      products.value = []; productsReady.value = false; productsRefresh = 0
+      await refreshProducts(true)
       return true
     } catch (error) {
       console.error('Login failed:', error)
@@ -66,6 +88,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    productGeneration++; products.value = []; productsReady.value = false; productsError.value = ''; productsRefresh = 0
     lastRefresh = 0
     token.value = null
     userInfo.value = null
@@ -100,6 +123,7 @@ export const useUserStore = defineStore('user', () => {
     currentStoreId,
     userInfo,
     permissions,
+    products, productsReady, productsError, product, canAccessProduct, canTradeProduct, homePath, refreshProducts,
     login,
     logout,
     hasPermission,

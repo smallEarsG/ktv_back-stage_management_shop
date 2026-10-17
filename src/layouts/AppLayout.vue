@@ -3,6 +3,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import ServiceReminder from '@/components/ServiceReminder.vue'
+import { productNames } from '@/lib/products'
 import {
   Odometer,
   ShoppingCart,
@@ -28,6 +29,14 @@ onMounted(() => compactQuery.addEventListener('change', updateSidebar))
 onBeforeUnmount(() => compactQuery.removeEventListener('change', updateSidebar))
 
 const menuItems = [
+  { path: '/services', icon: Shop, label: '已购服务', common: true },
+  { path: '/mall', icon: ShoppingCart, label: '商城管理', product: 'MALL', children: [
+    { path: '/mall/products', label: '商城商品', permission: 'product:view' },
+    { path: '/mall/orders', label: '商城订单', permission: 'order:view' },
+    { path: '/mall/aftersales', label: '退款退货', permission: ['refund:view', 'refund:approve'] },
+    { path: '/mall/settings', label: '商城设置', permission: 'settings:view' },
+    { path: '/mall/report', label: '商城报表', permission: 'finance:view' }
+  ] },
   { path: '/dining', icon: Shop, label: '点餐营业', permission: 'dining:view', children: [
     { path: '/dining/seats', label: '台位营业', permission: 'dining:view' },
     { path: '/dining/kitchen', label: '后厨出餐', permission: 'kitchen:operate' },
@@ -55,12 +64,13 @@ const menuItems = [
     { path: '/operations/coupons', label: '优惠券' },
     { path: '/operations/activities', label: '营销活动' }
   ] },
-  { path: '/settings', icon: Setting, label: '门店设置', permission: 'settings:view' }
+  { path: '/settings', icon: Setting, label: '门店设置', permission: 'settings:view', common: true }
 ]
 
 const filteredMenuItems = computed(() => {
-  return menuItems.map(item => item.children ? { ...item, children: item.children.filter(child => userStore.hasPermission(child.permission)) } : item)
-    .filter(item => item.path === '/dining' ? item.children.length : userStore.hasPermission(item.permission))
+  return menuItems.filter(item => item.common || userStore.canAccessProduct(item.product || 'DINING'))
+    .map(item => item.children ? { ...item, children: item.children.filter(child => userStore.hasPermission(child.permission)) } : item)
+    .filter(item => item.children ? item.children.length : userStore.hasPermission(item.permission))
 })
 
 const displayName = computed(() => {
@@ -126,7 +136,7 @@ const handleLogout = () => {
       <el-header class="app-header">
         <!-- Breadcrumb / Title -->
         <div class="header-title">
-          {{ route.meta.title || '后台管理' }}
+          {{ route.meta.title || '后台管理' }}<span v-if="route.meta.mallTab" class="ml-2 text-xs text-slate-400">{{ productNames.MALL }}</span>
         </div>
         
         <!-- User Profile -->

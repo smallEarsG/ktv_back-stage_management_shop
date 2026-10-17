@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import Login from '@/views/Login.vue'
 import { useUserStore } from '@/stores/user'
+import { routeProduct } from '@/lib/products'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -21,8 +22,11 @@ const router = createRouter({
     {
       path: '/',
       component: AppLayout,
-      redirect: '/workbench',
+      redirect: '/services',
       children: [
+        { path: 'services', name: 'ProductServices', component: () => import('@/views/ProductServices.vue'), meta: { title: '已购服务', requiresAuth: true } },
+        ...['products', 'orders', 'aftersales', 'settings', 'report'].map(tab => ({ path: `mall/${tab}`, name: `Mall-${tab}`, component: () => import('@/views/mall/MallConsole.vue'), meta: { title: { products: '商城商品', orders: '商城订单', aftersales: '商城售后', settings: '商城设置', report: '商城报表' }[tab], requiresAuth: true, mallTab: tab, permission: { products: 'product:view', orders: 'order:view', aftersales: ['refund:view', 'refund:approve'], settings: 'settings:view', report: 'finance:view' }[tab] } })),
+        { path: 'mall', redirect: '/mall/orders' },
         { path: 'account/security', name: 'AccountSecurity', component: () => import('@/views/AccountSecurity.vue'), meta: { title: '修改密码', requiresAuth: true } },
         ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({
           path: `dining/${tab}`, name: `Dining-${tab}`,
@@ -113,6 +117,7 @@ router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   if (to.meta.requiresAuth && userStore.token) {
     try { await userStore.refresh() } catch { userStore.logout(); next('/login'); return }
+    await userStore.refreshProducts()
   }
   if (to.meta.requiresAuth && !userStore.token) {
     next('/login')
@@ -120,6 +125,8 @@ router.beforeEach(async (to, from, next) => {
     next('/account/security')
   } else if (to.meta.permission && !userStore.hasPermission(to.meta.permission)) {
     next('/403')
+  } else if (to.meta.requiresAuth && routeProduct(to.path) && !userStore.canAccessProduct(routeProduct(to.path))) {
+    next({ path: '/services', query: { unavailable: routeProduct(to.path) } })
   } else {
     next()
   }

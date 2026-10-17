@@ -17,26 +17,6 @@ const form = reactive({
   password: ''
 })
 
-const firstAllowedPath = () => {
-  const nav = [
-    { path: '/workbench', permission: 'workbench:view' },
-    { path: '/pos/index', permission: 'pos:view' },
-    { path: '/dining/seats', permission: 'dining:view' },
-    { path: '/dining/kitchen', permission: 'kitchen:operate' },
-    { path: '/dining/services', permission: 'service:operate' },
-    { path: '/dashboard', permission: 'dashboard:view' },
-    { path: '/orders', permission: 'order:view' },
-    { path: '/products', permission: 'product:view' },
-    { path: '/refunds', permission: ['refund:view', 'refund:approve'] },
-    { path: '/finance', permission: 'finance:view' },
-    { path: '/warehouse', permission: 'warehouse:view' },
-    { path: '/operations/overview', permission: 'operations:view' },
-    { path: '/settings', permission: 'settings:view' }
-  ]
-  const hit = nav.find(i => userStore.hasPermission(i.permission))
-  return hit?.path || ''
-}
-
 const handleLogin = async () => {
   if (loading.value) return
   if (!form.phone || !form.password) {
@@ -53,7 +33,7 @@ const handleLogin = async () => {
     
     if (success) {
       if (userStore.userInfo?.passwordChangeRequired) { router.replace('/account/security'); return }
-      const target = firstAllowedPath()
+      const target = userStore.homePath()
       if (!target) {
         ElMessage.warning('该账号无权限，请联系管理员')
         router.replace('/403')

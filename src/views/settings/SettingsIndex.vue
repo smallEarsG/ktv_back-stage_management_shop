@@ -10,6 +10,7 @@ import MerchantAudit from '@/components/MerchantAudit.vue'
 
 const activeTab = ref('store')
 const userStore = useUserStore()
+const diningAvailable = computed(() => userStore.canAccessProduct('DINING'))
 const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
 const resetStaff = ref(null)
 const storeLoading = ref(false)
@@ -214,8 +215,9 @@ const availablePermissions = [
   { label: '仓库管理', value: 'warehouse:view' },
   { label: '运营中心', value: 'operations:view' },
   { label: '门店设置', value: 'settings:view' },
-  { label: '编辑点餐场景', value: 'settings:edit' }
+  { label: '编辑点餐／商城设置', value: 'settings:edit' }
 ]
+const visiblePermissions = computed(() => availablePermissions.filter(item => diningAvailable.value || !['dining:view', 'dining:manage', 'kitchen:operate', 'service:operate', 'dashboard:view', 'pos:view', 'workbench:view', 'operations:view'].includes(item.value)))
 
 const handlePermissionSet = (row) => {
   const currentUser = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
@@ -431,7 +433,7 @@ watch(activeTab, (val) => {
     </el-dialog>
     <el-tabs v-model="activeTab">
       <el-tab-pane v-if="isAdmin" label="操作记录" name="audit"><MerchantAudit v-if="activeTab === 'audit'" /></el-tab-pane>
-      <el-tab-pane label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
+      <el-tab-pane v-if="diningAvailable" label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
       <el-tab-pane label="门店资料" name="store">
         <el-form v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
           <el-form-item label="门店名称">
@@ -452,7 +454,7 @@ watch(activeTab, (val) => {
         </el-form>
       </el-tab-pane>
       
-      <el-tab-pane label="房间/座位管理" name="rooms">
+      <el-tab-pane v-if="diningAvailable" label="房间/座位管理" name="rooms">
         <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
           <div class="flex flex-wrap gap-2 items-center">
             <el-select v-model="roomQuery.type" placeholder="类型" clearable class="w-32" @change="getRoomList">
@@ -516,7 +518,7 @@ watch(activeTab, (val) => {
         </el-dialog>
       </el-tab-pane>
       
-      <el-tab-pane label="支付配置" name="payment">
+      <el-tab-pane v-if="diningAvailable" label="点餐支付说明" name="payment">
         <el-alert title="微信收款退款接口已预留，真实商户资料须在服务器配置并启用。此页面不保存支付密钥。" type="warning" show-icon class="mb-4" />
         <el-form disabled label-width="120px" class="max-w-lg">
           <el-form-item label="商户号 (MCHID)">
@@ -634,7 +636,7 @@ watch(activeTab, (val) => {
             </el-form-item>
             <el-form-item label="功能权限">
               <el-checkbox-group v-model="permissionForm.permissions">
-                <el-checkbox v-for="perm in availablePermissions" :key="perm.value" :label="perm.value">
+                <el-checkbox v-for="perm in visiblePermissions" :key="perm.value" :label="perm.value">
                   {{ perm.label }}
                 </el-checkbox>
               </el-checkbox-group>
