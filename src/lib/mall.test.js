@@ -4,16 +4,17 @@ import vm from 'node:vm'
 import { test } from 'node:test'
 import { computed, reactive, ref } from 'vue'
 import * as helpers from './mall.js'
+import { skuFields, skuPayload } from './mall-product-editor.js'
 import { canReleaseMallIntent } from './mall2.js'
 
 const memory = () => { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } }
 const op = () => ({ path: '/skus/12/stock', body: { requestKey: 'original-key', expectedVersion: 1, delta: 2, reason: '盘点' }, targetId: 12, label: '库存调整', createdAt: '2026-10-17T00:00:00Z' })
 function page(request = {}, storage = memory(), tab = 'orders') {
   const user = { currentStoreId: 1, userInfo: { id: 9 }, product: () => ({ application: { id: 7 } }), canTradeProduct: () => true, hasPermission: () => true }
-  const sandbox = { ...helpers, canReleaseMallIntent, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
+  const sandbox = { ...helpers, skuFields, skuPayload, canReleaseMallIntent, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
   vm.createContext(sandbox)
   const source = fs.readFileSync(new URL('../views/mall/MallConsole.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-  vm.runInContext(source + '\napi = { load, loadCapabilities, perform, recover, open, submit, form, editor, editorUncertain, rows, error, pending, recoveryError, capabilities, capabilityError };', sandbox)
+  vm.runInContext(source + '\napi = { load, loadCapabilities, perform, recover, open, submit, form, editor, editorUncertain, rows, error, pending, recoveryError, capabilities, capabilityError, selectQueue, queue, status, page, queueCounts, quickFulfill };', sandbox)
   return { ...sandbox.api, storage, user }
 }
 
@@ -72,6 +73,33 @@ test('product edits preserve SKU identity and do not overwrite existing stock', 
 test('spec editing rejects ambiguous duplicate names', () => {
   assert.deepEqual(helpers.parseMallSpecs('颜色=蓝色;容量=500ml'), { 颜色: '蓝色', 容量: '500ml' })
   assert.throws(() => helpers.parseMallSpecs('颜色=蓝;颜色=红'), /重复/)
+})
+
+test('order queues reset stale filters and use server counts across pages', async () => {
+  let params
+  const view = page({ get: async (_, options) => { params = options.params; return { list: [{ id: 1 }], total: 42, queueCounts: { ALL: 60, WAIT_SHIP: 42 } } } })
+  view.page.value = 3; view.status.value = 'COMPLETED'
+  view.selectQueue('WAIT_SHIP')
+  await view.load()
+  assert.equal(view.page.value, 1)
+  assert.equal(view.status.value, '')
+  assert.equal(params.queue, 'WAIT_SHIP')
+  assert.equal(view.queueCounts.value.WAIT_SHIP, 42)
+})
+
+test('quick fulfillment fetches current detail and keeps its version and remaining quantities', async () => {
+  let reads = 0
+  const fresh = { id: 4, version: 7, status: 'PARTIALLY_SHIPPED', payStatus: 'PAID', fulfillmentType: 'EXPRESS', marketing: {}, items: [{ id: 10, name: '商品', qty: 5, shippedQty: 2, unshippedAftersaleQty: 1 }] }
+  const view = page({ get: async () => { reads++; return fresh } })
+  await view.quickFulfill({ id: 4, version: 1, status: 'PAID' })
+  assert.equal(reads, 1)
+  assert.equal(view.editor.value, 'ship')
+  assert.equal(view.form.version, 7)
+  assert.equal(view.form.shipItems[0].max, 2)
+  assert.equal(view.form.shipItems[0].qty, 0)
+  const changed = page({ get: async path => path.endsWith('/orders/4') ? { ...fresh, status: 'AFTERSALE' } : { list: [], total: 0 } })
+  await changed.quickFulfill({ id: 4 })
+  assert.equal(changed.editor.value, '')
 })
 test('refund retries validate the original aftersale and refund number rather than mismatched internal ids', () => {
   const operation = { ...op(), path: '/aftersales/12/refund-retry' }

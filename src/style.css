@@ -40,3 +40,17 @@
   .el-dialog .el-form-item__content { min-width: 0; }
   .el-dialog .el-input-number, .el-dialog .el-select { max-width: 100%; }
 }
+
+/* Merchant operational UI: consistent, legible controls and focus states. */
+.commerce-shell{font-size:14px;--el-text-color-primary:#1e293b;--el-text-color-regular:#475569;--el-text-color-secondary:#64748b;--el-border-color:#dce3ee;--el-font-size-base:14px}
+.commerce-main :is(.page-heading, .insight-heading) h1,.growth-page>header h1{font-size:24px;font-weight:650;line-height:1.4}
+.commerce-main .el-table{font-size:14px;--el-table-header-text-color:#526178}
+.commerce-main .el-table .cell{line-height:1.65}
+.commerce-main :is(.el-form-item__label,.el-input__inner,.el-select__placeholder){font-size:14px}
+.commerce-main :is(.page-heading,.growth-page>header) p{color:#64748b;font-size:13px}
+.commerce-main :is(.eyebrow,.muted,.delivery-note){color:#64748b;font-size:12px}
+.commerce-shell :is(button,a,input,select,textarea):focus-visible,.el-dialog :is(button,input,textarea):focus-visible{outline:2px solid #4263eb;outline-offset:3px}
+.el-dialog,.el-drawer{--el-text-color-primary:#1e293b;--el-text-color-regular:#475569;--el-text-color-secondary:#64748b;font-size:14px}
+.el-dialog__title,.el-drawer__title{font-size:18px;font-weight:600;color:#1e293b}
+.el-dialog .el-form-item__label,.el-drawer .el-form-item__label{font-size:14px}
+@media(max-width:600px){.commerce-main :is(.page-heading,.insight-heading) h1,.growth-page>header h1{font-size:22px}.commerce-main .el-button{min-height:34px}.commerce-main .el-button.is-link{min-height:30px}.el-dialog .el-form-item__label{line-height:1.6;padding-bottom:8px}}

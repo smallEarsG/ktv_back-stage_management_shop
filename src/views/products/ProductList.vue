@@ -546,7 +546,7 @@ const handleUploadRequest = async (options) => {
 }
 
 const handleRemoveImage = () => {
-  productForm.image = ''    
+  productForm.image = ''
   uploadFileList.value = []
 }
 
@@ -705,6 +705,13 @@ const removeAttrOption = (i, oi) => {
 }
 
 
+function productCommand(command, row) {
+  if (command === 'detail') openProductDetail(row)
+  else if (command === 'rules') { diningRuleProduct.value = row; diningRuleVisible.value = true }
+  else if (command === 'delete') handleDelete(row)
+  else if (canManageInventory.value && ['inbound', 'stocktake'].includes(command)) goToWarehouse(row, command)
+}
+
 onMounted(() => {
   productMediaQuery = window.matchMedia('(max-width: 750px)')
   updateProductLayout()
@@ -727,20 +734,20 @@ onMounted(() => {
         <el-menu-item v-for="cat in categories" :key="cat.id" :index="cat.id.toString()" class="flex justify-between items-center pr-2 group">
           <span class="product-category-name" :title="cat.name">{{ cat.name }}</span>
           <div class="product-category-actions flex gap-1 items-center">
-            <el-button 
-              link 
-              type="primary" 
-              :icon="Edit" 
-              size="small" 
+            <el-button
+              link
+              type="primary"
+              :icon="Edit"
+              size="small"
               class="opacity-0 transition-opacity group-hover:opacity-100"
               :aria-label="`编辑分类${cat.name}`"
               @click.stop="handleEditCategory(cat)"
             ></el-button>
-          <el-button 
-            link 
-            type="danger" 
-            :icon="Delete" 
-            size="small" 
+          <el-button
+            link
+            type="danger"
+            :icon="Delete"
+            size="small"
             class="opacity-0 transition-opacity group-hover:opacity-100"
             :aria-label="`删除分类${cat.name}`"
             @click.stop="handleDeleteCategory(cat.id, cat.name)"
@@ -770,96 +777,16 @@ onMounted(() => {
         </div>
       </template>
 
-      <p class="product-mobile-hint">左右滑动查看商品详情，右侧可打开商品操作。</p>
-      <el-table class="product-table" :data="products" style="width: 100%" v-loading="loading" size="small" :row-class-name="getRowClass" :row-key="row => row.id || row.productId || row.code || row.name">
-        <el-table-column prop="image" label="图片" width="80">
-          <template #default="{ row }">
-             <el-image :src="row.image" class="w-10 h-10 rounded bg-slate-200" fit="cover">
-               <template #error>
-                 <div class="flex justify-center items-center w-full h-full text-slate-400">
-                   <el-icon><MoreFilled /></el-icon>
-                 </div>
-               </template>
-             </el-image>
-          </template>
-        </el-table-column>
-        <el-table-column prop="name" label="商品名称" />
-        <el-table-column prop="detail" label="详情" min-width="220" show-overflow-tooltip />
-        <el-table-column label="规格" min-width="160">
-          <template #default="{ row }">
-            <template v-if="row.hasSpecs">
-              <div class="flex flex-wrap gap-1 items-center">
-                <el-tag
-                  v-for="(spec, i) in (row.specList || [])"
-                  :key="i"
-                  size="small"
-                  effect="plain"
-                >
-                  {{ spec.name }}: {{ (spec.values?.length || 0) }}项
-                </el-tag>
-                <span v-if="!row.specList || !row.specList.length" class="text-slate-400">多规格</span>
-              </div>
-            </template>
-            <template v-else>
-              <span class="text-slate-400">单规格</span>
-            </template>
-          </template>
-        </el-table-column>
-        <el-table-column label="属性" width="120">
-          <template #default="{ row }">
-            <template v-if="getProductAttrSummary(row).count">
-              <el-tooltip :content="getProductAttrSummary(row).names.join('、')" placement="top">
-                <el-tag effect="plain" round>{{ getProductAttrSummary(row).count }}项</el-tag>
-              </el-tooltip>
-            </template>
-            <template v-else>—</template>
-          </template>
-        </el-table-column>
-        <el-table-column prop="price" label="价格" width="110">
-          <template #default="{ row }"><span class="font-mono text-slate-700">¥ {{ Number(row.price || 0).toFixed(2) }}</span></template>
-        </el-table-column>
-        <el-table-column prop="stock" label="库存" width="110">
-           <template #default="{ row }">
-             <el-tag :type="inventorySummary(row).lowCount > 0 ? 'danger' : 'success'" round>{{ row.stock }}</el-tag>
-           </template>
-        </el-table-column>
-        <el-table-column label="库存预警" width="170">
-          <template #default="{ row }">
-            <el-tag v-if="inventorySummary(row).lowCount" type="danger" size="small">{{ inventorySummary(row).lowCount }}个规格库存不足</el-tag>
-            <span v-else class="text-slate-500">正常</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" @change="active => changeProductStatus(row, active)" />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" :width="mobileProductLayout ? 88 : canManageInventory ? 370 : 270" fixed="right">
-          <template #default="{ row }">
-            <div class="product-row-actions">
-            <el-button link type="primary" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
-            <el-button link type="primary" @click="openProductDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="diningRuleProduct = row; diningRuleVisible = true">点餐设置</el-button>
-            <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'inbound')">入库</el-button>
-            <el-button v-if="canManageInventory" link type="primary" @click="goToWarehouse(row, 'stocktake')">盘点</el-button>
-            </div>
-            <el-dropdown class="product-mobile-actions" trigger="click">
-              <el-button link type="primary" :icon="MoreFilled" :aria-label="`操作商品${row.name}`">操作</el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="handleEdit(row)">编辑</el-dropdown-item>
-                  <el-dropdown-item @click="openProductDetail(row)">详情</el-dropdown-item>
-                  <el-dropdown-item @click="diningRuleProduct = row; diningRuleVisible = true">点餐设置</el-dropdown-item>
-                  <el-dropdown-item v-if="canManageInventory" @click="goToWarehouse(row, 'inbound')">入库</el-dropdown-item>
-                  <el-dropdown-item v-if="canManageInventory" @click="goToWarehouse(row, 'stocktake')">盘点</el-dropdown-item>
-                  <el-dropdown-item divided @click="handleDelete(row)">删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </template>
-        </el-table-column>
+
+      <el-table v-if="!mobileProductLayout" class="product-table" :data="products" style="width: 100%" v-loading="loading" :row-class-name="getRowClass" :row-key="row => row.id || row.productId || row.code || row.name">
+        <el-table-column label="商品" min-width="250"><template #default="{ row }"><div class="product-summary"><el-image :src="row.image" fit="cover"><template #error><span>商品</span></template></el-image><div><strong>{{ row.name }}</strong><p>{{ row.detail || '暂无商品描述' }}</p></div></div></template></el-table-column>
+        <el-table-column label="售价" width="112"><template #default="{ row }"><strong class="product-price">¥{{ Number(row.price || 0).toFixed(2) }}</strong><small v-if="row.skus.length > 1" class="product-note">多规格起价</small></template></el-table-column>
+        <el-table-column label="库存" width="125"><template #default="{ row }"><strong :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">{{ row.stock }}</strong><small class="product-note" :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">{{ inventorySummary(row).lowCount ? `${inventorySummary(row).lowCount}个规格不足` : '库存正常' }}</small></template></el-table-column>
+        <el-table-column label="规格 / 属性" min-width="150"><template #default="{ row }"><span>{{ row.hasSpecs ? `${row.skus.length}个规格` : '单规格' }}</span><small v-if="getProductAttrSummary(row).count" class="product-note">{{ getProductAttrSummary(row).names.join('、') }}</small><el-button v-if="row.hasSpecs" class="product-spec-link" link type="primary" @click="openProductDetail(row)">查看规格</el-button></template></el-table-column>
+        <el-table-column label="销售状态" width="110"><template #default="{ row }"><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><small class="product-note">{{ row.status ? '销售中' : '已下架' }}</small></template></el-table-column>
+        <el-table-column label="操作" width="142" fixed="right"><template #default="{ row }"><div class="compact-product-actions"><el-button link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多 <el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item command="delete" divided class="danger-product-action">删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
       </el-table>
+      <div v-else v-loading="loading" class="product-mobile-cards"><article v-for="row in products" :key="row.id"><div class="product-summary"><el-image :src="row.image" fit="cover"><template #error><span>商品</span></template></el-image><div><strong>{{ row.name }}</strong><p>{{ row.detail || '暂无商品描述' }}</p></div></div><div class="mobile-product-values"><strong>¥{{ Number(row.price || 0).toFixed(2) }}</strong><span :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">库存 {{ row.stock }} {{ inventorySummary(row).lowCount ? '· 库存不足' : '' }}</span><span>{{ row.hasSpecs ? `${row.skus.length}个规格` : '单规格' }}</span></div><footer><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><span>{{ row.status ? '销售中' : '已下架' }}</span><div class="compact-product-actions"><el-button link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item command="delete" divided>删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></footer></article><el-empty v-if="!products.length && !loading" description="暂无商品，可新增商品或调整分类" /></div>
       <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :pager-count="mobileProductLayout ? 5 : 7" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="product-pagination mt-4" />
     </el-card>
 
@@ -1002,7 +929,7 @@ onMounted(() => {
           <el-input v-model="productForm.detail" type="textarea" placeholder="请输入商品详情" />
         </el-form-item>
         <el-form-item label="图片">
-          <el-upload 
+          <el-upload
             v-model:file-list="uploadFileList"
             list-type="picture-card"
             :limit="1"
@@ -1087,7 +1014,7 @@ onMounted(() => {
         </el-form-item>
       </el-form>
     </el-dialog>
-    
+
     <el-dialog v-model="showEditCategoryDialog" title="编辑分类" width="380px">
       <el-form :model="editCategoryForm" label-width="80px">
         <el-form-item label="名称">
@@ -1209,4 +1136,7 @@ onMounted(() => {
     margin-right: 0;
   }
 }
+
+.product-page{flex-direction:column;height:auto;gap:16px}.product-category-card{width:100%;flex:none}.product-category-heading{padding:12px 18px;background:#fff;font-size:14px}.product-category-menu{display:flex;overflow-x:auto;padding:6px 8px;scrollbar-width:thin}.product-category-menu :deep(.el-menu-item){flex:0 0 auto;height:40px;line-height:40px;border-radius:7px;padding:0 12px!important;gap:10px;margin-right:4px}.product-category-menu :deep(.el-menu-item.is-active){background:#eef2ff}.product-category-menu :deep(.el-menu-item:focus-within .el-button){opacity:1}.product-list-card{flex:none;width:100%}.product-list-card :deep(.el-card__header){padding:18px 20px}.product-list-card :deep(.el-card__body){padding:18px 20px}.product-summary{display:flex;align-items:center;gap:12px;min-width:0}.product-summary>.el-image{width:48px;height:48px;border-radius:8px;flex-shrink:0;background:#f1f5f9}.product-summary :deep(.el-image__error){font-size:12px;color:#64748b}.product-summary>div{min-width:0}.product-summary strong{font-size:14px;color:#1e293b;overflow-wrap:anywhere}.product-summary p{font-size:12px;color:#64748b;margin:5px 0 0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.product-price{font-variant-numeric:tabular-nums;color:#1e293b}.product-note{display:block;margin-top:5px;font-size:12px;line-height:1.6;color:#64748b}.low-stock{color:#b45309}.compact-product-actions{display:flex;align-items:center;gap:14px;white-space:nowrap}.compact-product-actions .el-button+.el-button{margin:0}.product-table :deep(.el-table__cell){padding:14px 0}.product-mobile-cards{display:grid;gap:12px}.product-mobile-cards article{padding:14px;border:1px solid #e2e8f0;border-radius:10px}.mobile-product-values{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0;font-size:12px;color:#64748b}.mobile-product-values strong{font-size:18px;color:#1e293b}.product-mobile-cards footer{display:flex;align-items:center;gap:8px;border-top:1px solid #edf0f5;padding-top:10px;font-size:12px;color:#64748b}.product-mobile-cards footer>.compact-product-actions{margin-left:auto}@media(max-width:750px){.product-list-card :deep(.el-card__body){padding:12px}.product-list-card :deep(.el-card__header){padding:14px 12px}.product-category-heading{padding:10px 12px}.product-category-actions :deep(.el-button){opacity:1}}
+.product-spec-link{display:block;margin-top:5px}
 </style>

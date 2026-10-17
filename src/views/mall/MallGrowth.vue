@@ -1,4 +1,5 @@
 <script setup>
+import MallMemberRules from '@/components/MallMemberRules.vue'
 import MallBatchShipping from './MallBatchShipping.vue'
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -12,7 +13,7 @@ import { phase2Text, parseBatchCsv, downloadCsv, canReleaseMallIntent, memberTie
 const route = useRoute(), user = useUserStore(), tab = route.meta.mallGrowth
 const app = user.product('MALL')?.application?.id, root = `/mall/apps/${app}/v2`
 const title = { members: '商城会员', 'member-rules': '会员规则与等级', coupons: '商城优惠券', shipping: '配送与物流', batch: '批量工作台', sharing: '点餐与商城共享' }[tab]
-const batchRevision = ref(0)
+const batchRevision = ref(0), memberRulesDirty = ref(false)
 const batchMode = route.query.mode || 'all'
 const basicDelivery = reactive({})
 const config = reactive({}), shipping = reactive({}), sharing = reactive({})
@@ -27,7 +28,7 @@ function replace(target, value) { Object.keys(target).forEach(key => delete targ
 async function load() {
   loading.value = true; error.value = ''; loaded.value = false
   try {
-    if (['members', 'member-rules', 'coupons'].includes(tab)) { const [c, m, t] = await Promise.all([request.get(`${root}/members/config`), request.get(`${root}/members`, { params: { page: page.value, size: 20, birthdays: birthdays.value } }), request.get(`${root}/coupons`)]); if (disposed) return; replace(config, { ...c, tiers: memberTiersForForm(c.tiers) }); list.value = m.list; total.value = m.total; coupons.value = t.list }
+    if (['members', 'member-rules', 'coupons'].includes(tab)) { const [c, m, t] = await Promise.all([request.get(`${root}/members/config`), tab === 'members' ? request.get(`${root}/members`, { params: { page: page.value, size: 20, birthdays: birthdays.value } }) : Promise.resolve({ list: [], total: 0 }), tab === 'coupons' ? request.get(`${root}/coupons`) : Promise.resolve({ list: [] })]); if (disposed) return; replace(config, { ...c, tiers: memberTiersForForm(c.tiers) }); list.value = m.list; total.value = m.total; coupons.value = t.list }
     else if (tab === 'shipping') { const [s, i, basic] = await Promise.all([request.get(`${root}/shipping`), request.get(`${root}/integrations`), request.get(`/mall/apps/${app}/settings`)]); if (disposed) return; replace(basicDelivery, basic); replace(shipping, { ...s, localAreasText: s.localAreas.join('\n') }); integrations.value = i.list.filter(item => ['TRACKING', 'WAYBILL', 'LOCAL_DELIVERY'].includes(item.kind)) }
     else if (tab === 'sharing') { const s = await request.get(`${root}/sharing`); if (disposed) return; replace(sharing, s); if (user.hasPermission('warehouse:view')) { const b = await request.get(`${root}/sharing/inventory`); if (!disposed) bindings.value = b.list } if (user.hasPermission('product:view') || user.hasPermission('warehouse:view')) { const c = await request.get(`${root}/sharing/candidates`); if (disposed) return; candidates.value = c.list } if (user.hasPermission('warehouse:view')) { const p = await request.get(`${root}/sharing/mall-candidates`); if (disposed) return; mallSkus.value = p.list.map(sku => ({ ...sku, label: `${sku.name} · ${sku.skuCode}` })) } }
     loaded.value = true
@@ -41,11 +42,11 @@ async function saveBasicDelivery() {
   catch (e) { error.value = `${e.message}。请刷新后核对设置`; loaded.value = false }
   finally { busy.value = false }
 }
-async function save(type) {
+async function save(type, draft = null) {
   if (blocked.value || !loaded.value || !canEdit.value) return
   busy.value = true; error.value = ''
-  try { const value = type === 'members' ? { ...config, tiers: memberTiersForSave(config.tiers) } : type === 'shipping' ? { ...shipping, localAreas: shipping.localAreasText.split('\n').map(s => s.trim()).filter(Boolean) } : sharing; await request.put(`${root}/${type === 'members' ? 'members/config' : type}`, { ...value, expectedVersion: value.version }); ElMessage.success('设置已保存'); await load() }
-  catch (e) { error.value = `${e.message}。请刷新读取最新设置再调整`; loaded.value = false }
+  try { const value = type === 'members' ? { ...(draft || config), tiers: memberTiersForSave((draft || config).tiers) } : type === 'shipping' ? { ...shipping, localAreas: shipping.localAreasText.split('\n').map(s => s.trim()).filter(Boolean) } : sharing; await request.put(`${root}/${type === 'members' ? 'members/config' : type}`, { ...value, expectedVersion: value.version }); ElMessage.success('设置已保存'); await load() }
+  catch (e) { error.value = `${e.message}。请刷新读取最新设置再调整`; if (type !== 'members') loaded.value = false }
   finally { busy.value = false }
 }
 function open(type, row = {}) {
@@ -81,17 +82,21 @@ async function readFile(event) { const file = event.target.files?.[0]; if (!file
 async function inspectLedger(row) { ledgerOpen.value = true; ledger.value = null; error.value = ''; try { ledger.value = await request.get(`${root}/members/${row.customerId}/ledger`) } catch (e) { error.value = e.message; ledgerOpen.value = false } }
 function bulkShip() { try { const rows = parseBatchCsv(batchCsv.value, ['orderId', 'expectedVersion', 'carrier', 'trackingNo']); for (const row of rows) { if (!/^\d+$/.test(row.orderId) || !/^\d+$/.test(row.expectedVersion)) throw new Error('订单编号和资料版本必须为整数'); row.orderId = Number(row.orderId); row.expectedVersion = Number(row.expectedVersion) } send('/batch-ship', { rows }) } catch (e) { error.value = e.message } }
 async function unbind(row) { try { await ElMessageBox.confirm('解除后两侧分别管理库存；存在可售后订单时系统会阻止解除。', '确认解除库存关联'); await send(`/sharing/inventory/${row.id}/unbind`, { expectedVersion: row.version }) } catch (e) { if (e instanceof Error) error.value = e.message } }
+async function refreshPage() {
+  if (memberRulesDirty.value && tab === 'member-rules') { try { await ElMessageBox.confirm('刷新会放弃尚未保存的会员规则修改。', '重新读取规则？', { confirmButtonText: '放弃并刷新', cancelButtonText: '继续编辑', type: 'warning' }) } catch { return } }
+  await load()
+}
 onMounted(load); onBeforeUnmount(() => { disposed = true })
 </script>
 
 <template>
   <section class="growth-page" v-loading="loading">
-    <header><div><p class="eyebrow">独立商城 · 应用 #{{ app }}</p><h1>{{ title }}</h1><p class="muted">按门店管理，历史订单保留原规则。</p></div><el-button @click="load" :disabled="busy">刷新</el-button></header>
+    <header><div><p class="eyebrow">商城经营</p><h1>{{ title }}</h1><p class="muted">按门店管理，历史订单保留原规则。</p></div><el-button @click="refreshPage" :disabled="busy">刷新</el-button></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-alert v-if="pending" title="有一项操作的结果待确认，请使用原请求继续核对。" type="warning" :closable="false"><el-button :loading="busy" :disabled="pending.damaged" @click="recover">原请求重试</el-button></el-alert>
-    <nav v-if="['members', 'member-rules', 'coupons'].includes(tab)" class="mall-subnav"><RouterLink to="/mall/members">会员名单</RouterLink><RouterLink to="/mall/member-rules">会员规则与等级</RouterLink><RouterLink to="/mall/coupons">优惠券活动</RouterLink></nav>
+    <nav v-if="['members', 'coupons'].includes(tab)" class="mall-subnav"><RouterLink to="/mall/members">会员名单</RouterLink><RouterLink to="/mall/member-rules">会员规则与等级</RouterLink><RouterLink to="/mall/coupons">优惠券活动</RouterLink></nav>
     <template v-if="['members', 'member-rules', 'coupons'].includes(tab) && loaded">
-      <section v-if="tab === 'member-rules'" class="panel"><h2>会员规则</h2><el-form label-position="top" @submit.prevent="save('members')"><fieldset :disabled="blocked || !canEdit"><div class="grid"><el-form-item label="会员营销"><el-switch v-model="config.enabled" /></el-form-item><el-form-item label="每消费1元赠积分（完成订单后入账）"><el-input-number v-model="config.pointsPerYuan" :min="0" :max="1000" :precision="0" /></el-form-item><el-form-item label="抵扣1元所需积分"><el-input-number v-model="config.pointsPerYuanRedeem" :min="1" :max="100000" :precision="0" /></el-form-item><el-form-item label="积分最高抵扣比例（%）"><el-input-number v-model="config.maxPointsPercent" :min="0" :max="100" :precision="0" /></el-form-item><el-form-item label="生日前多少天发放生日券"><el-input-number v-model="config.birthdayAdvanceDays" :min="0" :max="30" :precision="0" /></el-form-item><el-form-item label="商城独立钱包（当前仅演示余额）"><el-switch v-model="config.walletEnabled" /></el-form-item></div><h3>会员等级</h3><article v-for="(tier, index) in config.tiers" :key="index" class="tier-row"><el-input v-model="tier.name" placeholder="等级名称" maxlength="40" /><el-input-number v-model="tier.minGrowth" :min="0" :precision="2" aria-label="最低成长值" /><el-input-number v-model="tier.discountRate" :min="0.001" :max="10" :precision="3" :step="0.1" aria-label="会员折扣（折）" /><span>{{ Number(tier.discountRate).toFixed(3).replace(/0+$/, '').replace(/\.$/, '') }}折</span><el-button :disabled="config.tiers.length < 2" @click="config.tiers.splice(index, 1)">移除</el-button></article><p class="muted">依次填写等级名称、最低成长值和折扣（10折为原价，9.5折即优惠5%）。退款会退回抵扣积分并冲回相应消费奖励；已使用的优惠券不补发。</p><div class="actions"><el-button :disabled="config.tiers.length >= 10" @click="config.tiers.push({ name: '', minGrowth: Number(config.tiers.at(-1)?.minGrowth || 0) + 100, discountRate: config.tiers.at(-1)?.discountRate || 10 })">添加等级</el-button><el-button type="primary" native-type="submit">保存规则</el-button></div></fieldset></el-form></section>
+      <MallMemberRules v-if="tab === 'member-rules'" :config="config" :busy="blocked" :readonly="!canEdit" @dirty="memberRulesDirty = $event" @save="save('members', $event)" />
       <section v-if="tab === 'coupons'" class="panel"><header><h2>优惠券</h2><div class="actions"><el-button :disabled="blocked || !user.canTradeProduct('MALL')" @click="send('/birthday-run')">执行生日活动</el-button><el-button type="primary" :disabled="blocked || !user.canTradeProduct('MALL')" @click="open('coupon')">新建券</el-button></div></header><div class="scroll-table"><el-table :data="coupons"><el-table-column prop="name" label="券名称" min-width="140" /><el-table-column label="类型"><template #default="{ row }">{{ phase2Text(row.kind) }}</template></el-table-column><el-table-column label="优惠"><template #default="{ row }">满{{ row.minimum }}减{{ row.amount }}</template></el-table-column><el-table-column label="已发 / 总量"><template #default="{ row }">{{ row.issued }}/{{ row.totalLimit }}</template></el-table-column><el-table-column label="有效期" min-width="190"><template #default="{ row }">{{ row.startsOn }} 至 {{ row.endsOn }}</template></el-table-column><el-table-column label="状态"><template #default="{ row }">{{ row.active ? '启用' : '停用' }}</template></el-table-column><el-table-column label="操作"><template #default="{ row }"><el-button link :disabled="blocked" @click="open('coupon', row)">编辑</el-button></template></el-table-column></el-table></div></section>
       <section v-if="tab === 'members'" class="panel"><header><h2>商城会员</h2><el-checkbox v-model="birthdays" @change="page = 1; load()">未来30天生日</el-checkbox></header><div class="scroll-table"><el-table :data="list"><el-table-column prop="customerId" label="会员编号" /><el-table-column prop="nickname" label="昵称" /><el-table-column prop="birthday" label="生日" min-width="120" /><el-table-column label="等级"><template #default="{ row }">{{ row.tier?.name }}</template></el-table-column><el-table-column prop="points" label="积分" /><el-table-column prop="growth" label="成长值" /><el-table-column prop="balance" label="商城余额" /><el-table-column label="操作" min-width="150"><template #default="{ row }"><el-button v-if="user.hasPermission('finance:view')" link @click="inspectLedger(row)">流水</el-button><el-button v-if="user.hasPermission('finance:view') && config.walletEnabled && config.walletMode === 'MOCK'" :disabled="blocked" link @click="open('topup', row)">模拟充值</el-button></template></el-table-column></el-table></div><el-pagination v-model:current-page="page" :total="total" :page-size="20" layout="prev, pager, next" :pager-count="5" @current-change="load" /></section>
     </template>
