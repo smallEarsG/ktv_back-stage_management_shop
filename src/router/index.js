@@ -29,7 +29,7 @@ const router = createRouter({
         { path: 'mall/report', redirect: { path: '/reports', query: { business: 'MALL' } } },
         { path: 'services', name: 'ProductServices', component: () => import('@/views/ProductServices.vue'), meta: { title: '已购服务', requiresAuth: true } },
         ...['products', 'orders', 'aftersales', 'settings'].map(tab => ({ path: `mall/${tab}`, name: `Mall-${tab}`, component: () => import('@/views/mall/MallConsole.vue'), meta: { title: { products: '商城商品', orders: '商城订单', aftersales: '商城售后', settings: '商城设置' }[tab], requiresAuth: true, mallTab: tab, permission: { products: 'product:view', orders: 'order:view', aftersales: ['refund:view', 'refund:approve'], settings: 'settings:view' }[tab] } })),
-        ...['members', 'member-rules', 'coupons', 'shipping', 'batch', 'sharing'].map(tab => ({ path: `mall/${tab}`, name: `Mall-growth-${tab}`, component: () => import('@/views/mall/MallGrowth.vue'), meta: { title: { members: '商城会员', 'member-rules': '会员规则与等级', coupons: '商城优惠券', shipping: '配送与物流', batch: '批量工作台', sharing: '共享设置' }[tab], requiresAuth: true, mallGrowth: tab, permission: { members: 'operations:view', 'member-rules': 'operations:view', coupons: 'operations:view', shipping: 'settings:view', batch: ['product:view', 'order:view', 'finance:view'], sharing: 'settings:view' }[tab] } })),
+        ...['members', 'member-rules', 'coupons', 'shipping', 'batch', 'sharing'].map(tab => ({ path: `mall/${tab}`, name: `Mall-growth-${tab}`, component: () => import('@/views/mall/MallGrowth.vue'), meta: { title: { members: '商城会员', 'member-rules': '会员规则与等级', coupons: '商城优惠券', shipping: '配送与物流', batch: '批量工作台', sharing: '共享设置' }[tab], requiresAuth: true, mallGrowth: tab, permission: { members: 'operations:view', 'member-rules': 'operations:view', coupons: 'operations:view', shipping: 'settings:view', batch: ['product:view', 'order:view', 'finance:view'], sharing: ['settings:view', 'sharing:manage', 'sharing:copy', 'sharing:bind'] }[tab], ...(tab === 'sharing' ? { legacyPermission: 'settings:view' } : {}) } })),
         { path: 'mall', redirect: '/mall/orders' },
         { path: 'account/security', name: 'AccountSecurity', component: () => import('@/views/AccountSecurity.vue'), meta: { title: '修改密码', requiresAuth: true } },
         ...['seats', 'kitchen', 'services', 'prints', 'shifts', 'settings'].map(tab => ({
@@ -127,7 +127,7 @@ router.beforeEach(async (to, from, next) => {
     next('/login')
   } else if (to.meta.requiresAuth && userStore.userInfo?.passwordChangeRequired && to.path !== '/account/security') {
     next('/account/security')
-  } else if (to.meta.permission && !userStore.hasPermission(to.meta.permission)) {
+  } else if (to.meta.permission && !userStore.hasPermission(to.meta.permission, routeProduct(to.path) || (to.path === '/settings' ? 'COMMON' : 'ALL'), to.meta.legacyPermission)) {
     next('/403')
   } else if (to.meta.requiresAuth && routeProduct(to.path) && !userStore.canAccessProduct(routeProduct(to.path))) {
     next({ path: '/services', query: { unavailable: routeProduct(to.path) } })

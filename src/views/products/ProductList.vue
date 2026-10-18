@@ -11,7 +11,10 @@ const diningRuleVisible = ref(false), diningRuleProduct = ref(null)
 
 const router = useRouter()
 const userStore = useUserStore()
-const canManageInventory = computed(() => userStore.hasPermission('warehouse:view'))
+const canManageInventory = computed(() => userStore.hasPermission('warehouse:adjust', 'DINING'))
+const canCreate = computed(() => userStore.hasPermission('product:create', 'DINING'))
+const canEdit = computed(() => userStore.hasPermission('product:edit', 'DINING'))
+const canDelete = computed(() => userStore.hasPermission('product:delete', 'DINING'))
 const goToWarehouse = (row, action) => router.push({ path: '/warehouse', query: { productId: String(row.id), action } })
 const mobileProductLayout = ref(false)
 let productMediaQuery
@@ -268,6 +271,7 @@ const filterProducts = () => { queryParams.page = 1; return fetchProducts() }
 const handleProductPageChange = page => { queryParams.page = page; return fetchProducts() }
 const handleProductPageSizeChange = size => { queryParams.pageSize = size; return filterProducts() }
 const changeProductStatus = async (row, active) => {
+  if (!canEdit.value) { row.status = !active; return }
   if (statusPending[row.id]) return
   statusPending[row.id] = true
   try {
@@ -279,6 +283,7 @@ const changeProductStatus = async (row, active) => {
 }
 
 const handleAdd = () => {
+  if (!canCreate.value) return
   productForm.id = null
   productForm.name = ''
   productForm.categoryId =
@@ -308,6 +313,7 @@ const handleAdd = () => {
 }
 
 const handleEdit = (row) => {
+  if (!canEdit.value) return
   const p = normalizeProduct({ ...row })
   productForm.id = p.id ?? null
   productForm.name = p.name ?? ''
@@ -362,12 +368,14 @@ const openProductDetail = (row) => {
   showDetailDialog.value = true
 }
 const handleDelete = async (row) => {
+  if (!canDelete.value) return
   try {
     await ElMessageBox.confirm(`确定删除商品「${row.name}」吗？该操作不可恢复。`, '删除确认', {
       type: 'warning',
       confirmButtonText: '删除',
       cancelButtonText: '取消'
     })
+    if (!canDelete.value) return
     await request.delete(`/products/${row.id}`)
     ElMessage.success('操作成功')
     fetchProducts()
@@ -379,6 +387,7 @@ const handleDelete = async (row) => {
   }
 }
 const saveProduct = async () => {
+  if (!(productForm.id ? canEdit.value : canCreate.value)) return
   try {
     const valid = await productFormRef.value?.validate?.()
     if (!valid) return
@@ -439,6 +448,7 @@ const saveProduct = async () => {
 }
 
 const handleAddCategory = async () => {
+  if (!(canCreate.value || canEdit.value)) return
   if (!addCategoryForm.name.trim()) {
     ElMessage.warning('请输入分类名称')
     return
@@ -454,6 +464,7 @@ const handleAddCategory = async () => {
 }
 
 const handleOpenAddCategory = () => {
+  if (!(canCreate.value || canEdit.value)) return
   addCategoryForm.name = ''
   addCategoryForm.sort = 0
   addCategoryForm.active = true
@@ -461,6 +472,7 @@ const handleOpenAddCategory = () => {
 }
 
 const handleEditCategory = (cat) => {
+  if (!canEdit.value) return
   editCategoryForm.id = cat.id
   editCategoryForm.name = cat.name || ''
   editCategoryForm.sort = Number.isFinite(cat.sort) ? cat.sort : 0
@@ -469,6 +481,7 @@ const handleEditCategory = (cat) => {
 }
 
 const handleSaveCategory = async () => {
+  if (!canEdit.value) return
   if (!editCategoryForm.name.trim()) {
     ElMessage.warning('请输入分类名称')
     return
@@ -488,6 +501,7 @@ const handleSaveCategory = async () => {
 }
 
 const handleDeleteCategory = (id, name) => {
+  if (!canDelete.value) return
   ElMessageBox.confirm(
     `确定要删除分类 "${name}" 吗?`,
     '警告',
@@ -498,6 +512,7 @@ const handleDeleteCategory = (id, name) => {
     }
   ).then(async () => {
     try {
+      if (!canDelete.value) return
       await request.delete(`/categories/${id}`)
       ElMessage.success('删除成功')
       if (activeCategory.value?.toString() === id?.toString()) {
@@ -526,6 +541,7 @@ const beforeUpload = (file) => {
 }
 
 const handleUploadRequest = async (options) => {
+  if (!(productForm.id ? canEdit.value : canCreate.value)) return
   try {
     const formData = new FormData()
     formData.append('file', options.file)
@@ -707,7 +723,7 @@ const removeAttrOption = (i, oi) => {
 
 function productCommand(command, row) {
   if (command === 'detail') openProductDetail(row)
-  else if (command === 'rules') { diningRuleProduct.value = row; diningRuleVisible.value = true }
+  else if (command === 'rules' && canEdit.value) { diningRuleProduct.value = row; diningRuleVisible.value = true }
   else if (command === 'delete') handleDelete(row)
   else if (canManageInventory.value && ['inbound', 'stocktake'].includes(command)) goToWarehouse(row, command)
 }
@@ -727,7 +743,7 @@ onMounted(() => {
     <el-card class="product-category-card flex-shrink-0 w-56" :body-style="{ padding: '0' }">
       <div class="product-category-heading flex justify-between items-center p-4 font-bold border-b bg-slate-50">
         <span>商品分类</span>
-        <el-button link type="primary" :icon="Plus" size="small" aria-label="新增商品分类" @click="handleOpenAddCategory"></el-button>
+        <el-button v-if="canCreate || canEdit" link type="primary" :icon="Plus" size="small" aria-label="新增商品分类" @click="handleOpenAddCategory"></el-button>
       </div>
       <el-menu :default-active="activeCategory" class="product-category-menu border-none" @select="onSelectCategory">
         <el-menu-item :index="allCategoryId">全部</el-menu-item>
@@ -738,6 +754,7 @@ onMounted(() => {
               link
               type="primary"
               :icon="Edit"
+              v-if="canEdit"
               size="small"
               class="opacity-0 transition-opacity group-hover:opacity-100"
               :aria-label="`编辑分类${cat.name}`"
@@ -747,6 +764,7 @@ onMounted(() => {
             link
             type="danger"
             :icon="Delete"
+            v-if="canDelete"
             size="small"
             class="opacity-0 transition-opacity group-hover:opacity-100"
             :aria-label="`删除分类${cat.name}`"
@@ -772,7 +790,7 @@ onMounted(() => {
               @keyup.enter="filterProducts"
               @clear="filterProducts"
             />
-            <el-button type="primary" :icon="Plus" @click="handleAdd">新增商品</el-button>
+            <el-button v-if="canCreate" type="primary" :icon="Plus" @click="handleAdd">新增商品</el-button>
           </div>
         </div>
       </template>
@@ -783,10 +801,10 @@ onMounted(() => {
         <el-table-column label="售价" width="112"><template #default="{ row }"><strong class="product-price">¥{{ Number(row.price || 0).toFixed(2) }}</strong><small v-if="row.skus.length > 1" class="product-note">多规格起价</small></template></el-table-column>
         <el-table-column label="库存" width="125"><template #default="{ row }"><strong :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">{{ row.stock }}</strong><small class="product-note" :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">{{ inventorySummary(row).lowCount ? `${inventorySummary(row).lowCount}个规格不足` : '库存正常' }}</small></template></el-table-column>
         <el-table-column label="规格 / 属性" min-width="150"><template #default="{ row }"><span>{{ row.hasSpecs ? `${row.skus.length}个规格` : '单规格' }}</span><small v-if="getProductAttrSummary(row).count" class="product-note">{{ getProductAttrSummary(row).names.join('、') }}</small><el-button v-if="row.hasSpecs" class="product-spec-link" link type="primary" @click="openProductDetail(row)">查看规格</el-button></template></el-table-column>
-        <el-table-column label="销售状态" width="110"><template #default="{ row }"><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><small class="product-note">{{ row.status ? '销售中' : '已下架' }}</small></template></el-table-column>
-        <el-table-column label="操作" width="142" fixed="right"><template #default="{ row }"><div class="compact-product-actions"><el-button link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多 <el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item command="delete" divided class="danger-product-action">删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
+        <el-table-column label="销售状态" width="110"><template #default="{ row }"><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id] || !canEdit" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><small class="product-note">{{ row.status ? '销售中' : '已下架' }}</small></template></el-table-column>
+        <el-table-column label="操作" width="142" fixed="right"><template #default="{ row }"><div class="compact-product-actions"><el-button v-if="canEdit" link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多 <el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item v-if="canEdit" command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item v-if="canDelete" command="delete" divided class="danger-product-action">删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></template></el-table-column>
       </el-table>
-      <div v-else v-loading="loading" class="product-mobile-cards"><article v-for="row in products" :key="row.id"><div class="product-summary"><el-image :src="row.image" fit="cover"><template #error><span>商品</span></template></el-image><div><strong>{{ row.name }}</strong><p>{{ row.detail || '暂无商品描述' }}</p></div></div><div class="mobile-product-values"><strong>¥{{ Number(row.price || 0).toFixed(2) }}</strong><span :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">库存 {{ row.stock }} {{ inventorySummary(row).lowCount ? '· 库存不足' : '' }}</span><span>{{ row.hasSpecs ? `${row.skus.length}个规格` : '单规格' }}</span></div><footer><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id]" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><span>{{ row.status ? '销售中' : '已下架' }}</span><div class="compact-product-actions"><el-button link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item command="delete" divided>删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></footer></article><el-empty v-if="!products.length && !loading" description="暂无商品，可新增商品或调整分类" /></div>
+      <div v-else v-loading="loading" class="product-mobile-cards"><article v-for="row in products" :key="row.id"><div class="product-summary"><el-image :src="row.image" fit="cover"><template #error><span>商品</span></template></el-image><div><strong>{{ row.name }}</strong><p>{{ row.detail || '暂无商品描述' }}</p></div></div><div class="mobile-product-values"><strong>¥{{ Number(row.price || 0).toFixed(2) }}</strong><span :class="{ 'low-stock': inventorySummary(row).lowCount > 0 }">库存 {{ row.stock }} {{ inventorySummary(row).lowCount ? '· 库存不足' : '' }}</span><span>{{ row.hasSpecs ? `${row.skus.length}个规格` : '单规格' }}</span></div><footer><el-switch v-model="row.status" :loading="statusPending[row.id]" :disabled="statusPending[row.id] || !canEdit" :aria-label="`上架商品${row.name}`" @change="active => changeProductStatus(row, active)" /><span>{{ row.status ? '销售中' : '已下架' }}</span><div class="compact-product-actions"><el-button v-if="canEdit" link type="primary" @click="handleEdit(row)">编辑</el-button><el-dropdown trigger="click" @command="command => productCommand(command, row)"><el-button link :aria-label="`更多操作${row.name}`">更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="detail">商品详情</el-dropdown-item><el-dropdown-item v-if="canEdit" command="rules">点餐设置</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="inbound">办理入库</el-dropdown-item><el-dropdown-item v-if="canManageInventory" command="stocktake">库存盘点</el-dropdown-item><el-dropdown-item v-if="canDelete" command="delete" divided>删除商品</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></footer></article><el-empty v-if="!products.length && !loading" description="暂无商品，可新增商品或调整分类" /></div>
       <el-pagination v-model:current-page="queryParams.page" v-model:page-size="queryParams.pageSize" :page-sizes="[20, 50, 100]" :pager-count="mobileProductLayout ? 5 : 7" :total="total" layout="total, sizes, prev, pager, next" @current-change="handleProductPageChange" @size-change="handleProductPageSizeChange" class="product-pagination mt-4" />
     </el-card>
 
@@ -952,7 +970,7 @@ onMounted(() => {
           <el-switch v-model="productForm.status" active-text="上架" inactive-text="下架" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="saveProduct">保存</el-button>
+          <el-button type="primary" :disabled="!(productForm.id ? canEdit : canCreate)" @click="saveProduct">保存</el-button>
           <el-button @click="showEditDialog = false">取消</el-button>
         </el-form-item>
       </el-form>

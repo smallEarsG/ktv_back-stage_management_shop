@@ -9,6 +9,9 @@ const props = defineProps({
   member: { type: Object, required: true },
   admin: { type: Boolean, default: false },
   financialBlocked: { type: Boolean, default: false },
+  canEdit: { type: Boolean, default: undefined },
+  canTopup: { type: Boolean, default: undefined },
+  canIssue: { type: Boolean, default: undefined },
 })
 const emit = defineEmits(['detail', 'recharge', 'issue', 'edit'])
 const active = computed(() => props.member.status === 'ACTIVE')
@@ -33,12 +36,12 @@ const balance = computed(() => amountText(Number(props.member.principal || 0) + 
     <div class="member-birthday" :class="{ 'birthday-today': todayBirthday }">
       <span class="birthday-label"><el-icon><Present /></el-icon>生日</span>
       <template v-if="registeredBirthday"><span class="birthday-date">{{ birthdayText(member.birthday) }}</span><span v-if="birthdayNotice" class="birthday-countdown">{{ birthdayNotice }}</span></template>
-      <button v-else-if="admin" type="button" class="birthday-register" @click="emit('edit')">登记生日<span aria-hidden="true"> +</span></button>
+      <button v-else-if="canEdit ?? admin" type="button" class="birthday-register" @click="emit('edit')">登记生日<span aria-hidden="true"> +</span></button>
       <span v-else class="birthday-missing">未登记</span>
     </div>
     <footer class="member-footer">
       <span class="join-date"><el-icon><Calendar /></el-icon>{{ joinedDate }} 加入</span>
-      <MemberActions :member="member" :admin="admin" :financial-blocked="financialBlocked" @detail="emit('detail')" @recharge="emit('recharge')" @issue="emit('issue')" @edit="emit('edit')" />
+      <MemberActions :member="member" :admin="admin" :can-edit="canEdit" :can-topup="canTopup" :can-issue="canIssue" :financial-blocked="financialBlocked" @detail="emit('detail')" @recharge="emit('recharge')" @issue="emit('issue')" @edit="emit('edit')" />
     </footer>
   </article>
 </template>

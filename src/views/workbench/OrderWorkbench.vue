@@ -16,6 +16,7 @@ dayjs.extend(customParseFormat)
 
 const userStore = useUserStore()
 const settleCash = async row => {
+  if (!userStore.hasPermission('pos:view', 'DINING')) return
   const id = row.orderId || row.id
   if (statusPending[id]) return
   await ElMessageBox.confirm(`请确认已收到 ${roomKeyOf(row)} 此订单的全部现金，再登记结算。`, '现金结算', { type: 'warning' })
@@ -148,7 +149,7 @@ const statusTagType = (s) => {
   return 'info'
 }
 
-const canAct = (row) => [TAB_PENDING, TAB_PREPARING, TAB_DELIVERING].includes(Number(row?.status))
+const canAct = (row) => userStore.hasPermission('order:edit', 'DINING') && [TAB_PENDING, TAB_PREPARING, TAB_DELIVERING].includes(Number(row?.status))
 
 const nextStatusOf = row => nextOrderStatus(row?.status)
 
@@ -353,6 +354,7 @@ const orderKeyOf = (rowOrDetail) => {
 const isUnsettled = row => Number(row?.payStatus ?? row?.pay_status) === 0
 
 const updateStatus = async (rowOrDetail) => {
+  if (!userStore.hasPermission('order:edit', 'DINING')) return
   const current = Number(rowOrDetail?.status)
   const next = nextStatusOf({ status: current })
   if (!next) return

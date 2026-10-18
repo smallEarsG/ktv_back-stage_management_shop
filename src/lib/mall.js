@@ -18,8 +18,10 @@ export function parseMallSpecs(value) {
 export const mallPendingKey = (store, app, user) => `mall-pending:${store}:${app}:${user}`
 const operationPath = /^\/(orders\/\d+\/(ship|pickup)|skus\/\d+\/stock|aftersales\/\d+\/(decision|receive|refund-retry)|v2\/aftersales\/\d+\/(exchange-ship|withdraw)|v2\/shipments\/\d+\/mock-track)$/
 export function mallOperationPermission(path) {
-  if (/^\/skus\//.test(path)) return 'warehouse:view'
+  if (/^\/skus\//.test(path)) return 'warehouse:adjust'
   if (/^\/(?:v2\/)?aftersales\//.test(path)) return 'refund:approve'
+  if (/^\/v2\/shipments\//.test(path) || path.endsWith('/ship')) return 'order:ship'
+  if (path.endsWith('/pickup')) return 'order:pickup'
   return 'order:view'
 }
 export function readMallPending(storage, store, app, user) {

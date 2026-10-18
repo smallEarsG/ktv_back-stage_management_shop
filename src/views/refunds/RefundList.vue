@@ -117,7 +117,7 @@ const openReturns = async row => {
   returnRequest.value = `return-${crypto.randomUUID()}`; returnDialog.value = true
 }
 const receiveReturns = async () => {
-  if (receiving.value || automaticReturn.value || !userStore.hasPermission('warehouse:view')) return
+  if (receiving.value || automaticReturn.value || !userStore.hasPermission('warehouse:adjust', 'DINING')) return
   const items = returnItems.value.filter(item => item.quantity > 0).map(item => ({ orderItemId: item.orderItemId, quantity: item.quantity }))
   if (!received.value || !items.length) { ElMessage.warning('请选择实际收到的商品数量，并确认验收可入库'); return }
   receiving.value = true
@@ -188,12 +188,12 @@ onBeforeUnmount(() => { disposed = true; sequence++; capabilitySequence++; clear
       <el-table :data="returnItems">
         <el-table-column label="商品" min-width="170"><template #default="{ row }">{{ row.name }}<p class="text-sm text-slate-500">{{ attributesText(row.selectedAttrs) }}</p></template></el-table-column>
         <el-table-column prop="purchased" label="购买" width="70" /><el-table-column prop="returned" label="已退" width="70" />
-        <el-table-column v-if="!automaticReturn" label="本次验收入库" width="180"><template #default="{ row }"><el-input-number v-model="row.quantity" :min="0" :max="row.remaining" :precision="0" :disabled="receiving || !userStore.hasPermission('warehouse:view') || !row.remaining" /></template></el-table-column>
+        <el-table-column v-if="!automaticReturn" label="本次验收入库" width="180"><template #default="{ row }"><el-input-number v-model="row.quantity" :min="0" :max="row.remaining" :precision="0" :disabled="receiving || !userStore.hasPermission('warehouse:adjust', 'DINING') || !row.remaining" /></template></el-table-column>
       </el-table>
       <el-checkbox v-if="!automaticReturn" v-model="received" class="mt-3" :disabled="receiving">商品已实际收到并验收可入库</el-checkbox>
       <p class="my-3">历史退货：{{ returnRecords.length }} 笔</p>
       <el-table v-if="returnRecords.length" :data="returnRecords"><el-table-column prop="skuId" label="规格ID" /><el-table-column prop="quantity" label="数量" /><el-table-column prop="createdAt" label="入库时间" min-width="170" /></el-table>
-      <template #footer><el-button :disabled="receiving" @click="returnDialog = false">关闭</el-button><el-button v-if="!automaticReturn && userStore.hasPermission('warehouse:view')" type="primary" :loading="receiving" @click="receiveReturns">确认入库</el-button></template>
+      <template #footer><el-button :disabled="receiving" @click="returnDialog = false">关闭</el-button><el-button v-if="!automaticReturn && userStore.hasPermission('warehouse:adjust', 'DINING')" type="primary" :loading="receiving" @click="receiveReturns">确认入库</el-button></template>
     </el-dialog>
     <el-dialog v-model="dialog" title="申请退款" width="480px" :close-on-click-modal="!saving">
       <el-form label-width="90px">

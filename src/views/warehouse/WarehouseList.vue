@@ -10,6 +10,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const canAdjust = computed(() => userStore.hasPermission('warehouse:adjust', 'DINING'))
 let productDetailSequence = 0
 let inventorySequence = 0
 let historySequence = 0
@@ -273,6 +274,7 @@ const searchProducts = async (keyword = '') => {
 }
 
 const handleAction = async (type, row = null, skuId = null) => {
+  if (!canAdjust.value) return
   ++productDetailSequence
   detailLoading.value = false
   detailError.value = ''
@@ -349,6 +351,7 @@ const handleSelectProduct = async (id) => {
   }
 }
 const submitAction = async () => {
+  if (!canAdjust.value) return
   if (submitting.value) return
   if (!canSubmit.value) {
     ElMessage.error('请选择规格、填写有效数量，并填写出库或盘点原因'); return
@@ -422,7 +425,7 @@ watch(() => route.query, openShortcut)
       </div>
       <div class="heading-actions">
         <el-button :icon="Refresh" :loading="loading" @click="fetchInventory">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="handleAction('inbound')">商品入库</el-button>
+        <el-button v-if="canAdjust" type="primary" :icon="Plus" @click="handleAction('inbound')">商品入库</el-button>
       </div>
     </div>
 
@@ -467,14 +470,14 @@ watch(() => route.query, openShortcut)
                 <el-table-column label="操作" width="190" fixed="right">
                   <template #default="{ row: sku }">
                     <div class="row-actions">
-                      <el-button link type="primary" @click="handleAction('inbound', row, sku.id)">入库</el-button>
-                      <el-button link type="primary" :disabled="skuInventory(sku).stock === 0" @click="handleAction('outbound', row, sku.id)">出库</el-button>
+                      <el-button v-if="canAdjust" link type="primary" @click="handleAction('inbound', row, sku.id)">入库</el-button>
+                      <el-button v-if="canAdjust" link type="primary" :disabled="skuInventory(sku).stock === 0" @click="handleAction('outbound', row, sku.id)">出库</el-button>
                       <el-dropdown trigger="click" @command="command => handleMoreAction(command, row, sku.id)">
                         <el-button link type="primary" aria-label="规格更多操作">更多<el-icon><ArrowDown /></el-icon></el-button>
                         <template #dropdown>
                           <el-dropdown-menu>
-                            <el-dropdown-item command="stocktake">库存盘点</el-dropdown-item>
-                            <el-dropdown-item command="threshold">预警设置</el-dropdown-item>
+                            <el-dropdown-item v-if="canAdjust" command="stocktake">库存盘点</el-dropdown-item>
+                            <el-dropdown-item v-if="canAdjust" command="threshold">预警设置</el-dropdown-item>
                             <el-dropdown-item command="history" divided>库存流水</el-dropdown-item>
                           </el-dropdown-menu>
                         </template>
@@ -513,14 +516,14 @@ watch(() => route.query, openShortcut)
         <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button link type="primary" @click="handleAction('inbound', row)">入库</el-button>
-              <el-button link type="primary" :disabled="row.current === 0" @click="handleAction('outbound', row)">出库</el-button>
+              <el-button v-if="canAdjust" link type="primary" @click="handleAction('inbound', row)">入库</el-button>
+              <el-button v-if="canAdjust" link type="primary" :disabled="row.current === 0" @click="handleAction('outbound', row)">出库</el-button>
               <el-dropdown trigger="click" @command="command => handleMoreAction(command, row)">
                 <el-button link type="primary" aria-label="商品更多操作">更多<el-icon><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="stocktake">库存盘点</el-dropdown-item>
-                    <el-dropdown-item command="threshold">预警设置</el-dropdown-item>
+                    <el-dropdown-item v-if="canAdjust" command="stocktake">库存盘点</el-dropdown-item>
+                    <el-dropdown-item v-if="canAdjust" command="threshold">预警设置</el-dropdown-item>
                     <el-dropdown-item command="history" divided>库存流水</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -531,7 +534,7 @@ watch(() => route.query, openShortcut)
       </el-table>
       <div v-if="!loading && !inventoryError && !stockItems.length" class="inventory-empty-action">
         <el-button v-if="appliedKeyword || stockStatus" @click="resetInventoryFilters">清空筛选</el-button>
-        <el-button v-else-if="userStore.hasPermission('product:view')" type="primary" plain @click="router.push('/products')">去新建商品</el-button>
+        <el-button v-else-if="userStore.hasPermission('product:create', 'DINING')" type="primary" plain @click="router.push('/products')">去新建商品</el-button>
       </div>
       <div class="inventory-pagination">
         <el-pagination v-model:current-page="inventoryPage" :page-size="20" :total="inventoryTotal" layout="total, prev, pager, next" background @current-change="fetchInventory" />
@@ -552,7 +555,7 @@ watch(() => route.query, openShortcut)
           <el-select v-model="form.productId" placeholder="输入商品名称搜索" filterable remote :remote-method="searchProducts" :loading="productChoiceLoading" :disabled="submitting" clearable style="width: 100%" @change="handleSelectProduct">
             <el-option v-for="item in productChoices" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
-          <div v-if="userStore.hasPermission('product:view')" class="form-hint">商品不存在？<el-link type="primary" :underline="false" @click="showDialog = false; router.push('/products')">去新建商品</el-link></div>
+          <div v-if="userStore.hasPermission('product:create', 'DINING')" class="form-hint">商品不存在？<el-link type="primary" :underline="false" @click="showDialog = false; router.push('/products')">去新建商品</el-link></div>
         </el-form-item>
         <el-form-item v-if="selectedProduct && skuOptions.length" label="选择规格" required>
           <el-select v-model="form.skuId" placeholder="请选择需要操作的规格" filterable style="width: 100%" :disabled="submitting">
@@ -581,7 +584,7 @@ watch(() => route.query, openShortcut)
       </el-form>
       <template #footer>
         <el-button @click="showDialog = false" :disabled="submitting">取消</el-button>
-        <el-button type="primary" @click="submitAction" :loading="submitting" :disabled="!canSubmit || detailLoading">{{ submitLabel }}</el-button>
+        <el-button type="primary" @click="submitAction" :loading="submitting" :disabled="!canSubmit || detailLoading || !canAdjust">{{ submitLabel }}</el-button>
       </template>
     </el-dialog>
 

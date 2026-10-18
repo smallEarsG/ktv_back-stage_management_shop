@@ -6,20 +6,35 @@ import { computed, effectScope, reactive, ref, watch, nextTick } from 'vue'
 import * as helpers from './operations.js'
 import * as birthdayHelpers from './birthdays.js'
 
-function view(request, operationTab = 'members') {
+function view(request, operationTab = 'members', suppliedUser = null) {
   const source = fs.readFileSync(new URL('../views/operations/OperationsCenter.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), cleanup = [], storage = new Map()
   const route = reactive({ meta: { operationTab }, query: {} }), navigations = []
   const sandbox = { ...helpers, ...birthdayHelpers, money: helpers.amountText, ref, reactive, computed, watch, request,
     setInterval: () => 1, clearInterval: () => {}, onMounted: () => {}, onBeforeUnmount: fn => cleanup.push(fn),
-    useRoute: () => route, useRouter: () => ({ push: value => navigations.push(value) }), useUserStore: () => ({ currentStoreId: 2, userInfo: { role: 'admin' } }),
+    useRoute: () => route, useRouter: () => ({ push: value => navigations.push(value) }), useUserStore: () => suppliedUser || ({ currentStoreId: 2, userInfo: { role: 'admin' } }),
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
     ElMessage: { success: () => {}, error: () => {}, warning: () => {} }, ElMessageBox: { confirm: async () => {} } }
   vm.createContext(sandbox)
   scope.run(() => vm.runInContext(script + '\napi = { open, form, recharge, operationMember, memberOptions, refreshOperationMember, save, memberError, pending, dialogOpen, filterLedger, ledgerFilters, filterMembers, keyword, memberQuery, page, load, birthdayScope, birthdayInvalid, selectBirthdays, rows };', sandbox))
   return { ...sandbox.api, route, navigations, stop: () => { cleanup.forEach(fn => fn()); scope.stop() } }
 }
+
+test('会员编辑授权不能执行充值、调账、充值套餐或优惠券操作', async () => {
+  const writes = [], user = reactive({ currentStoreId: 2, userInfo: { role: 'staff' }, hasPermission: value => value === 'operations:edit' })
+  const page = view({ ...requestForMember(), post: async (...args) => writes.push(args), put: async (...args) => writes.push(args) }, 'members', user)
+  try {
+    for (const type of ['recharge', 'adjust', 'plan', 'coupon', 'issue', 'activity']) {
+      await page.open(type); assert.equal(page.dialogOpen.value, false)
+    }
+    await page.open('member', { id: fresh.id, name: fresh.name, birthdayVersion: 0 })
+    assert.equal(page.dialogOpen.value, true)
+    user.hasPermission = () => false
+    await page.save()
+    assert.equal(writes.length, 0)
+  } finally { page.stop() }
+})
 
 const fresh = { id: 120, name: '王会员', phone: '13800000001', status: 'ACTIVE', principal: 100, bonus: 10 }
 function requestForMember(post = async () => {}) {

@@ -7,12 +7,19 @@ import { useUserStore } from '@/stores/user'
 import QRCode from 'qrcode'
 import ResetStaffPassword from '@/components/ResetStaffPassword.vue'
 import MerchantAudit from '@/components/MerchantAudit.vue'
-import { scopePermissions, businessLabels } from '@/lib/business'
+import StaffPermissionEditor from '@/components/StaffPermissionEditor.vue'
+import { isV2Permissions } from '@/lib/permissions'
 
 const activeTab = ref('store')
 const userStore = useUserStore()
 const diningAvailable = computed(() => userStore.canAccessProduct('DINING'))
 const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+const fineGrained = computed(() => isV2Permissions(userStore.permissions || userStore.userInfo?.permissions || []))
+const canEditStore = computed(() => !fineGrained.value || isAdmin.value)
+const canReadRooms = computed(() => diningAvailable.value && (!fineGrained.value || userStore.hasPermission(['settings:view', 'pos:view', 'workbench:view'], 'DINING')))
+const canEditRooms = computed(() => diningAvailable.value && (!fineGrained.value || userStore.hasPermission('settings:edit', 'DINING')))
+const canReadDiningSettings = computed(() => diningAvailable.value && (!fineGrained.value || userStore.hasPermission('settings:view', 'DINING')))
+const canReadSeats = computed(() => diningAvailable.value && (!fineGrained.value || userStore.hasPermission('dining:view', 'DINING')))
 const resetStaff = ref(null)
 const storeLoading = ref(false)
 const storeSaving = ref(false)
@@ -25,7 +32,7 @@ const loadStore = async () => {
   } finally { storeLoading.value = false }
 }
 const saveStore = async () => {
-  if (storeSaving.value) return
+  if (storeSaving.value || !canEditStore.value) return
   if (!storeProfile.storeName.trim() || !storeProfile.contactPhone.trim()) { ElMessage.warning('请填写门店名称和联系电话'); return }
   storeSaving.value = true
   try {
@@ -195,32 +202,10 @@ const submitEditProfile = async () => {
 }
 
 const permissionDialogVisible = ref(false)
-const permissionBusinesses = ref([])
+const permissionSaving = ref(false)
+const permissionEditorRef = ref(null)
+const permissionStaff = ref(null)
 const assignableBusinesses = computed(() => ['DINING', 'MALL'].filter(userStore.canAccessProduct))
-const permissionForm = reactive({
-  id: '',
-  role: 'staff',
-  permissions: []
-})
-const availablePermissions = [
-  { label: '查看台位营业', value: 'dining:view' },
-  { label: '开台、转台与清台', value: 'dining:manage' },
-  { label: '后厨制作与出餐', value: 'kitchen:operate' },
-  { label: '处理顾客服务请求', value: 'service:operate' },
-  { label: '审批及执行退款', value: 'refund:approve' },
-  { label: '查看看板', value: 'dashboard:view' },
-  { label: '收银台', value: 'pos:view' },
-  { label: '工作台', value: 'workbench:view' },
-  { label: '订单管理', value: 'order:view' },
-  { label: '商品管理', value: 'product:view' },
-  { label: '退款管理', value: 'refund:view' },
-  { label: '财务管理', value: 'finance:view' },
-  { label: '仓库管理', value: 'warehouse:view' },
-  { label: '运营中心', value: 'operations:view' },
-  { label: '门店设置', value: 'settings:view' },
-  { label: '编辑点餐／商城设置', value: 'settings:edit' }
-]
-const visiblePermissions = computed(() => availablePermissions.filter(item => diningAvailable.value || !['dining:view', 'dining:manage', 'kitchen:operate', 'service:operate', 'pos:view', 'workbench:view'].includes(item.value)))
 
 const handlePermissionSet = (row) => {
   const currentUser = authStorage.getItem('userInfo') ? JSON.parse(authStorage.getItem('userInfo')) : {}
@@ -234,26 +219,29 @@ const handlePermissionSet = (row) => {
     return
   }
 
-  permissionForm.id = row.id
-  permissionForm.role = row.role
-  const previous = row.permissions || []
-  permissionBusinesses.value = assignableBusinesses.value.filter(type => !previous.includes('business:scoped') || previous.includes(`business:${type}`))
-  permissionForm.permissions = previous.filter(value => !value.startsWith('business:'))
+  permissionStaff.value = { ...row, permissions: [...(row.permissions || [])] }
   permissionDialogVisible.value = true
 }
 
-const submitPermission = async () => {
+const closePermissionDialog = async (done) => {
+  if (permissionSaving.value) return
+  if (!permissionEditorRef.value || await permissionEditorRef.value.confirmDiscard()) done()
+}
+
+const submitPermission = async (permissions) => {
+  if (permissionSaving.value || !isAdmin.value || !permissionStaff.value || permissionStaff.value.role === 'admin') return
+  permissionSaving.value = true
   try {
-    await request.put(`/users/${permissionForm.id}/role`, {
-      role: permissionForm.role,
-      permissions: scopePermissions(permissionForm.permissions, permissionBusinesses.value)
+    await request.put(`/users/${permissionStaff.value.id}/role`, {
+      role: 'staff',
+      permissions
     })
     ElMessage.success('权限更新成功')
     permissionDialogVisible.value = false
     getStaffList()
   } catch (error) {
     // Error handled
-  }
+  } finally { permissionSaving.value = false }
 }
 
 const handleDeleteStaff = (row) => {
@@ -291,6 +279,7 @@ const handleStaffPageChange = (page) => {
 }
 
 const getRoomList = async () => {
+  if (!canReadRooms.value) return
   roomLoading.value = true
   try {
     const res = await request.get('/rooms', {
@@ -320,11 +309,13 @@ const resetRoomForm = () => {
 }
 
 const handleAddRoom = () => {
+  if (!canEditRooms.value) return
   resetRoomForm()
   roomDialogVisible.value = true
 }
 
 const handleEditRoom = async (row) => {
+  if (!canEditRooms.value) return
   resetRoomForm()
   roomDialogVisible.value = true
   try {
@@ -341,9 +332,10 @@ const handleEditRoom = async (row) => {
 }
 
 const submitRoom = async () => {
+  if (!canEditRooms.value) return
   if (!roomFormRef.value) return
   await roomFormRef.value.validate(async (valid) => {
-    if (!valid) return
+    if (!valid || !canEditRooms.value) return
     try {
       const body = {
         roomNumber: roomForm.roomNumber,
@@ -368,6 +360,7 @@ const submitRoom = async () => {
 }
 
 const handleDeleteRoom = (row) => {
+  if (!canEditRooms.value) return
   ElMessageBox.confirm(`确定要删除房间 "${row.roomNumber}" 吗?`, '警告', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
@@ -375,6 +368,7 @@ const handleDeleteRoom = (row) => {
   })
     .then(async () => {
       try {
+        if (!canEditRooms.value) return
         await request.delete(`/rooms/${row.id}`)
         ElMessage.success('删除成功')
         getRoomList()
@@ -386,6 +380,7 @@ const handleDeleteRoom = (row) => {
 }
 
 const downloadQr = async (row) => {
+  if (!canReadRooms.value) return
   const demo = import.meta.env.VITE_DEMO_MODE === 'true'
   if (demo) {
     qrTarget.value = `${location.origin}/demo/customer/?storeCode=${encodeURIComponent(userStore.currentStoreId)}&roomId=${encodeURIComponent(row.roomNumber)}`
@@ -438,9 +433,9 @@ watch(activeTab, (val) => {
     </el-dialog>
     <el-tabs v-model="activeTab">
       <el-tab-pane v-if="isAdmin" label="操作记录" name="audit"><MerchantAudit v-if="activeTab === 'audit'" /></el-tab-pane>
-      <el-tab-pane v-if="diningAvailable" label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
+      <el-tab-pane v-if="canReadDiningSettings || canReadSeats" label="点餐场景" name="dining"><div class="p-6"><h2 class="text-xl mb-3">餐馆、KTV 与其他门店点餐</h2><p class="text-slate-500 mb-5">设置先付或后付、多人点餐、后厨出餐，以及实际接单的营业时间。</p><el-button v-if="canReadDiningSettings" type="primary" @click="$router.push('/dining/settings')">设置点餐场景</el-button><el-button v-if="canReadSeats" @click="$router.push('/dining/seats')">进入台位营业</el-button></div></el-tab-pane>
       <el-tab-pane label="门店资料" name="store">
-        <el-form v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
+        <el-form :disabled="!canEditStore" v-loading="storeLoading" label-width="120px" class="mt-4 max-w-lg">
           <el-form-item label="门店名称">
             <el-input v-model="storeProfile.storeName" maxlength="100" />
           </el-form-item>
@@ -454,12 +449,12 @@ watch(activeTab, (val) => {
             <el-input type="textarea" v-model="storeProfile.address" maxlength="500" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="storeSaving" @click="saveStore">保存更改</el-button>
+            <el-button v-if="canEditStore" type="primary" :loading="storeSaving" @click="saveStore">保存更改</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>
       
-      <el-tab-pane v-if="diningAvailable" label="房间/座位管理" name="rooms">
+      <el-tab-pane v-if="canReadRooms" label="房间/座位管理" name="rooms">
         <div class="flex flex-wrap gap-2 items-center justify-between mb-4">
           <div class="flex flex-wrap gap-2 items-center">
             <el-select v-model="roomQuery.type" placeholder="类型" clearable class="w-32" @change="getRoomList">
@@ -469,7 +464,7 @@ watch(activeTab, (val) => {
             <el-button type="primary" @click="getRoomList">查询</el-button>
           </div>
           <div class="flex gap-2">
-            <el-button type="primary" @click="handleAddRoom">添加房间</el-button>
+            <el-button v-if="canEditRooms" type="primary" @click="handleAddRoom">添加房间</el-button>
             <el-button @click="getRoomList">刷新</el-button>
           </div>
         </div>
@@ -488,8 +483,8 @@ watch(activeTab, (val) => {
           <el-table-column label="操作" width="220">
             <template #default="{ row }">
               <el-button link type="primary" @click="downloadQr(row).catch(() => {})">二维码</el-button>
-              <el-button link type="primary" @click="handleEditRoom(row)">编辑</el-button>
-              <el-button link type="danger" @click="handleDeleteRoom(row)">删除</el-button>
+              <el-button v-if="canEditRooms" link type="primary" @click="handleEditRoom(row)">编辑</el-button>
+              <el-button v-if="canEditRooms" link type="danger" @click="handleDeleteRoom(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -517,13 +512,13 @@ watch(activeTab, (val) => {
           <template #footer>
             <span class="dialog-footer">
               <el-button @click="roomDialogVisible = false">取消</el-button>
-              <el-button type="primary" @click="submitRoom">确定</el-button>
+              <el-button type="primary" :disabled="!canEditRooms" @click="submitRoom">确定</el-button>
             </span>
           </template>
         </el-dialog>
       </el-tab-pane>
       
-      <el-tab-pane v-if="diningAvailable" label="点餐支付说明" name="payment">
+      <el-tab-pane v-if="canReadDiningSettings" label="点餐支付说明" name="payment">
         <el-alert title="微信收款退款接口已预留，真实商户资料须在服务器配置并启用。此页面不保存支付密钥。" type="warning" show-icon class="mb-4" />
         <el-form disabled label-width="120px" class="max-w-lg">
           <el-form-item label="商户号 (MCHID)">
@@ -556,7 +551,7 @@ watch(activeTab, (val) => {
           <el-table-column prop="name" label="姓名" />
           <el-table-column prop="role" label="角色">
             <template #default="{ row }">
-               <el-tag :type="row.role === 'admin' ? 'danger' : 'info'">{{ row.role }}</el-tag>
+               <el-tag :type="row.role === 'admin' ? 'danger' : 'info'">{{ row.role === 'admin' ? '店长／老板' : '员工' }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="phone" label="手机号" />
@@ -631,31 +626,8 @@ watch(activeTab, (val) => {
         </el-dialog>
 
         <!-- Permission Dialog -->
-        <el-dialog v-model="permissionDialogVisible" title="员工业务与操作权限" width="min(660px, 94vw)">
-          <el-form label-width="80px">
-            <el-form-item label="角色">
-              <el-radio-group v-model="permissionForm.role">
-                <el-radio label="staff">员工</el-radio>
-
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="业务范围">
-              <div><el-checkbox-group v-model="permissionBusinesses"><el-checkbox v-for="type in assignableBusinesses" :key="type" :label="type">{{ businessLabels[type] }}</el-checkbox></el-checkbox-group><p class="text-xs text-slate-400 mt-2">选择员工负责的业务，再选择可执行的操作。未选择业务时仅保留已授权的公共管理功能。</p></div>
-            </el-form-item>
-            <el-form-item label="功能权限">
-              <el-checkbox-group v-model="permissionForm.permissions">
-                <el-checkbox v-for="perm in visiblePermissions" :key="perm.value" :label="perm.value">
-                  {{ perm.label }}
-                </el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </el-form>
-          <template #footer>
-            <span class="dialog-footer">
-              <el-button @click="permissionDialogVisible = false">取消</el-button>
-              <el-button type="primary" @click="submitPermission">保存</el-button>
-            </span>
-          </template>
+        <el-dialog v-model="permissionDialogVisible" title="员工业务与操作权限" width="min(1060px, 96vw)" :close-on-click-modal="false" :close-on-press-escape="!permissionSaving" :show-close="!permissionSaving" :before-close="closePermissionDialog" destroy-on-close>
+          <StaffPermissionEditor v-if="permissionDialogVisible && permissionStaff" ref="permissionEditorRef" :staff="permissionStaff" :available-businesses="assignableBusinesses" :saving="permissionSaving" @save="submitPermission" @close="permissionDialogVisible = false" />
         </el-dialog>
       </el-tab-pane>
     </el-tabs>

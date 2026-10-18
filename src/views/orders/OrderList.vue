@@ -210,6 +210,7 @@ const handleDateRangeChange = (range) => {
 }
 
 const handleStatusChange = async (row, nextStatus) => {
+  if (!userStore.hasPermission('order:edit', 'DINING')) return
   if (statusPending[row.id]) return
   statusPending[row.id] = true
   try {
@@ -234,11 +235,13 @@ watch([activeStatus, searchQuery, dateRange, payStatusFilter], () => {
 watch([currentPage, pageSize], fetchOrders)
 
 const cancelOrder = async (row) => {
+  if (!userStore.hasPermission('order:edit', 'DINING')) return
   await ElMessageBox.confirm('确认取消未付款订单并释放库存？', '取消订单', { type: 'warning' })
   return handleStatusChange(row, 90)
 }
 
 const settleCash = async (row) => {
+  if (!userStore.hasPermission('pos:view', 'DINING')) return
   if (statusPending[row.id]) return
   await ElMessageBox.confirm('请确认已收到此订单的全部现金，再登记结算。', '确认现金到账', { type: 'warning' })
   statusPending[row.id] = true
@@ -398,17 +401,17 @@ onBeforeUnmount(() => { detailSequence++ })
         <template #default="{ row }">
           <el-button v-if="isCreditUnsettled(row) && userStore.hasPermission('pos:view')" size="small" type="warning" :loading="statusPending[row.id]" @click="settleCash(row).catch(() => {})">现金结算</el-button>
           <el-button v-if="canResume(row)" size="small" @click="resumePayment(row)">继续支付 / 查询</el-button>
-          <template v-if="Number(row.status) === 10">
+          <template v-if="userStore.hasPermission('order:edit', 'DINING') && Number(row.status) === 10">
             <el-button type="danger" size="small" :loading="statusPending[row.id]" @click="cancelOrder(row).catch(() => {})">取消订单</el-button>
           </template>
-          <template v-else-if="Number(row.status) === 20">
+          <template v-else-if="userStore.hasPermission('order:edit', 'DINING') && Number(row.status) === 20">
             <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 30)">接单</el-button>
             <el-button type="danger" size="small" :disabled="!isCreditUnsettled(row)" :loading="statusPending[row.id]" @click="cancelOrder(row).catch(() => {})">取消</el-button>
           </template>
-          <template v-else-if="Number(row.status) === 30">
+          <template v-else-if="userStore.hasPermission('order:edit', 'DINING') && Number(row.status) === 30">
             <el-button type="primary" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 40)">开始配送</el-button>
           </template>
-          <template v-else-if="Number(row.status) === 40">
+          <template v-else-if="userStore.hasPermission('order:edit', 'DINING') && Number(row.status) === 40">
             <el-button type="success" size="small" :loading="statusPending[row.id]" @click="handleStatusChange(row, 50)">完成</el-button>
           </template>
           <template v-else-if="Number(row.status) === 50">

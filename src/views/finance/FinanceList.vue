@@ -56,7 +56,7 @@ const itemAttributes = item => {
 }
 
 const exportFlows = async () => {
-  if (exporting.value) return
+  if (exporting.value || !userStore.hasPermission('finance:export', 'DINING')) return
   exporting.value = true
   const params = buildParams(false)
   try {
@@ -83,7 +83,7 @@ onMounted(() => { if (hadInitialRange) fetchFlows() })
   <div class="finance-page">
     <div class="finance-header">
       <div><h2>资金流水</h2><p>按收款和退款记录查询，查看关联订单与商品明细。</p></div>
-      <div class="finance-actions"><el-button @click="openOverview">财务看板</el-button><el-button :icon="Refresh" :loading="flows.loading" @click="fetchFlows()">刷新数据</el-button><el-button type="primary" :icon="Download" :loading="exporting" :disabled="filtersDirty" @click="exportFlows">导出当前筛选</el-button></div>
+      <div class="finance-actions"><el-button @click="openOverview">财务看板</el-button><el-button :icon="Refresh" :loading="flows.loading" @click="fetchFlows()">刷新数据</el-button><el-button v-if="userStore.hasPermission('finance:export', 'DINING')" type="primary" :icon="Download" :loading="exporting" :disabled="filtersDirty" @click="exportFlows">导出当前筛选</el-button></div>
     </div>
     <div class="finance-period"><span class="finance-note">{{ periodText }}</span><TimeRangePicker v-model="dateRange" :clearable="false" @update:label="currentLabel = $event" @change="changeRange" /></div>
     <div class="finance-panel">

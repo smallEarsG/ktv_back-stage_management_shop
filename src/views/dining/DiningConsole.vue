@@ -56,7 +56,7 @@ async function act(fn, message = '已更新') {
 const openPolicy = ref(null)
 const openVisible = ref(false), openForm = reactive({ roomId: '', headcount: 1 })
 function openSeat(seat) { if (!can('dining:manage')) return; Object.assign(openForm, { roomId: seat.roomNumber, headcount: 1 }); openPolicy.value = seat.roomBillingRule || null; openVisible.value = true }
-async function confirmOpen() { if (await act(() => request.post('/dining/sessions', { ...openForm }), '已开台')) openVisible.value = false }
+async function confirmOpen() { if (!can('dining:manage')) return; if (await act(() => request.post('/dining/sessions', { ...openForm }), '已开台')) openVisible.value = false }
 const returnOrder = ref(null)
 function openReturn(order) { if (can('refund:approve')) returnOrder.value = order }
 async function returnSubmitted() { returnOrder.value = null; await loadBill(); await load(true) }
@@ -84,6 +84,7 @@ async function loadBill() {
   finally { if (version === billGeneration) billLoading.value = false }
 }
 async function seatAction(action) {
+  if (!can('dining:manage')) return
   if (action === 'close' || action === 'clean') { try { await ElMessageBox.confirm(action === 'close' ? '确认本次账款与送餐均已处理，结束消费？' : '确认台位已清理，可以接待下一批顾客？', action === 'close' ? '结束本次消费' : '完成清台') } catch { return } }
   await act(() => request.post(`/dining/sessions/${currentSession.value.id}/action`, { action, ...(action === 'transfer' ? { roomId: targetRoom.value } : {}) }))
   transferVisible.value = false
@@ -91,12 +92,14 @@ async function seatAction(action) {
 function retain(operation) { localStorage.setItem(recoveryStorageKey(), JSON.stringify(operation)); pending.value = operation }
 function clearRecovery() { localStorage.removeItem(recoveryStorageKey()); pending.value = null }
 async function collectCash() {
+  if (!can('pos:view')) return
   if (!cashReady.value || pending.value) return
   const operation = { kind: 'settle', sessionId: currentSession.value.id, body: { requestKey: requestKey(), orderIds: [...selectedOrders.value], expectedAmount: money(selectedDue.value), cashReceived: money(tender.value) } }
   try { retain(operation) } catch { ElMessage.error('无法保存交易恢复记录，暂不能收款'); return }
   await recover()
 }
 async function recover() {
+  if (!can('pos:view')) { ElMessage.warning('当前账号无权恢复原收银交易，请联系店长'); return }
   if (!pending.value || busy.value) return
   const operation = pending.value
   busy.value = true
@@ -115,6 +118,7 @@ const selectedProduct = computed(() => products.value.find(p => String(p.id) ===
 const selectedSku = computed(() => selectedProduct.value?.skus?.find(s => String(s.id) === String(skuId.value)))
 const attributeGroups = computed(() => { const s = selectedSku.value; if (!s) return []; if (Array.isArray(s.attrConfig)) return s.attrConfig; try { return JSON.parse(s.attrConfigJson || '[]') } catch { return [] } })
 async function openOrder() {
+  if (!can('pos:view')) return
   if (pending.value) { ElMessage.warning('请先恢复未确认交易'); return }
   orderItems.value = []; orderQuote.value = null; orderVisible.value = true; orderNote.value = ''; orderMethod.value = 3
   try { const all = []; let page = 1; while (page <= 100) { const data = await request.get('/products', { params: { page, pageSize: 100 } }); const list = data.list || data.records || []; all.push(...list); if (!list.length || all.length >= Number(data.total || all.length)) break; page++ } products.value = all.filter(p => p.status !== false) } catch (e) { ElMessage.error(e.message) }
@@ -127,6 +131,7 @@ function addLine() {
   orderItems.value.push({ skuId: Number(skuId.value), qty: qty.value, selectedAttrs: JSON.parse(JSON.stringify(attrs)), note: lineNote.value, extras: extras.value.map(id => ({ skuId: id, qty: 1 })), name: selectedProduct.value.name }); orderQuote.value = null; lineNote.value = ''; qty.value = 1
 }
 async function quoteOrder() {
+  if (!can('pos:view')) return
   if (!orderItems.value.length || quoteBusy.value) return
   quoteBusy.value = true
   try { orderQuote.value = await request.post(`/dining/sessions/${currentSession.value.id}/quote`, { items: orderItems.value, payMethod: orderMethod.value }) }
@@ -134,26 +139,27 @@ async function quoteOrder() {
 }
 watch(orderMethod, () => { orderQuote.value = null })
 async function submitOrder() {
+  if (!can('pos:view')) return
   if (!orderQuote.value || pending.value) return
   const body = { clientOrderNo: requestKey(), items: orderItems.value, payMethod: orderMethod.value, expectedAmount: orderQuote.value.amountTotal, note: orderNote.value }
   if (orderMethod.value === 2) { if (Number(orderTender.value) < Number(orderQuote.value.amountTotal)) { ElMessage.warning('请填写足额实收现金'); return }; body.cashReceived = money(orderTender.value) }
   try { retain({ kind: 'order', sessionId: currentSession.value.id, body }) } catch { ElMessage.error('无法保存交易记录，暂不能提交'); return }
   await recover()
 }
-async function processLine(order, item) { await act(() => request.post(`/dining/kitchen/${order.id}`, { itemId: item.id, state: nextLineState(item.state) })) }
-async function processService(row) { await act(() => request.post(`/dining/services/${row.id}/done`), '已处理顾客请求') }
+async function processLine(order, item) { if (!can('kitchen:operate')) return; await act(() => request.post(`/dining/kitchen/${order.id}`, { itemId: item.id, state: nextLineState(item.state) })) }
+async function processService(row) { if (!can('service:operate')) return; await act(() => request.post(`/dining/services/${row.id}/done`), '已处理顾客请求') }
 const approvalVisible = ref(false), approval = reactive({ id: null, action: 'approve', resolution: '' })
-function review(row, action) { Object.assign(approval, { id: row.id, action, resolution: '' }); approvalVisible.value = true }
-async function resolve() { if (!approval.resolution.trim()) { ElMessage.warning('请填写处理说明'); return }; if (await act(() => request.post(`/dining/aftersales/${approval.id}`, { action: approval.action, resolution: approval.resolution }), approval.action === 'approve' ? '申请已审核；退款请到退款售后继续处理' : '已回复顾客')) approvalVisible.value = false }
+function review(row, action) { if (!can('refund:approve')) return; Object.assign(approval, { id: row.id, action, resolution: '' }); approvalVisible.value = true }
+async function resolve() { if (!can('refund:approve')) return; if (!approval.resolution.trim()) { ElMessage.warning('请填写处理说明'); return }; if (await act(() => request.post(`/dining/aftersales/${approval.id}`, { action: approval.action, resolution: approval.resolution }), approval.action === 'approve' ? '申请已审核；退款请到退款售后继续处理' : '已回复顾客')) approvalVisible.value = false }
 function printTicket(row) { previewPayload.value = row.payload || row.printPayload }
-async function markPrint(row, action) { if (action === 'retry' && row.state === 'PRINTED') { try { await ElMessageBox.confirm('这张小票已确认打印。重新排队可能造成重复出餐，请核对后继续。', '重新打印') } catch { return } }; await act(() => request.post(`/dining/prints/${row.id}`, { action })) }
+async function markPrint(row, action) { if (!can('kitchen:operate')) return; if (action === 'retry' && row.state === 'PRINTED') { try { await ElMessageBox.confirm('这张小票已确认打印。重新排队可能造成重复出餐，请核对后继续。', '重新打印') } catch { return } }; await act(() => request.post(`/dining/prints/${row.id}`, { action })) }
 function changePrintPage(delta) { printPage.value = Math.max(1, printPage.value + delta); load() }
 watch(printState, () => { printPage.value = 1; load() })
 const shiftVisible = ref(false), shiftForm = reactive({ action: 'open', openingCash: 0, actualCash: 0, note: '', id: null })
 function openShift(row) { Object.assign(shiftForm, { action: row ? 'close' : 'open', id: row?.id, openingCash: 0, actualCash: 0, note: '' }); shiftVisible.value = true }
-async function confirmShift() { if (await act(() => request.post('/dining/shifts', { ...shiftForm }), shiftForm.action === 'open' ? '本班已开始' : '交班已登记')) shiftVisible.value = false }
+async function confirmShift() { if (!can('pos:view')) return; if (await act(() => request.post('/dining/shifts', { ...shiftForm }), shiftForm.action === 'open' ? '本班已开始' : '交班已登记')) shiftVisible.value = false }
 function preset() { Object.assign(cfg, scenePreset(cfg.industry)) }
-async function saveConfig() { await act(() => request.put('/dining/config', { ...cfg }), '场景设置已保存') }
+async function saveConfig() { if (!can('settings:edit')) return; await act(() => request.put('/dining/config', { ...cfg }), '场景设置已保存') }
 watch(tab, () => { generation++; rows.value = []; services.value = []; aftersales.value = []; keyword.value = ''; station.value = ''; error.value = ''; load() })
 onMounted(async () => { await load(); timer = setInterval(() => { if (!disposed && !busy.value && !loading.value && !document.hidden && !['settings', 'shifts'].includes(tab.value)) { load(true); if (billVisible.value && !billLoading.value) loadBill() } }, 5000) })
 onBeforeUnmount(() => { disposed = true; generation++; billGeneration++; clearInterval(timer) })

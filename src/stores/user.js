@@ -5,6 +5,7 @@ import request from '@/lib/request'
 import { authStorage } from '@/lib/auth-storage'
 import { findProduct, productAccessible, productTradable, firstProductPath } from '@/lib/products'
 import { businessAllowed } from '@/lib/business'
+import { hasAction, isV2Permissions } from '@/lib/permissions'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(authStorage.getItem('token'))
@@ -39,7 +40,7 @@ export const useUserStore = defineStore('user', () => {
   const product = type => findProduct(products.value, type)
   const canAccessProduct = type => productsReady.value && productAccessible(product(type)) && businessAllowed(userInfo.value?.role, permissions.value, type)
   const canTradeProduct = type => canAccessProduct(type) && productTradable(product(type))
-  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), hasPermission)
+  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), permission => hasPermission(permission, 'ALL'))
 
   let lastRefresh = 0
   async function refresh(force = false) {
@@ -101,13 +102,16 @@ export const useUserStore = defineStore('user', () => {
     router.replace('/login')
   }
 
-  function hasPermission(permission) {
-    if (Array.isArray(permission)) return permission.some(hasPermission)
-    // Admin has full access
-    if (userInfo.value?.role === 'admin') return true
-    
+  function hasPermission(permission, business, legacyPermission) {
+    if (legacyPermission && !isV2Permissions(permissions.value)) permission = legacyPermission
     if (!permission) return true
-    return permissions.value.includes(permission)
+    const path = router.currentRoute?.value?.path || ''
+    const selected = (['DINING', 'MALL', 'COMMON', 'ALL'].includes(business) ? business : null) || (path.startsWith('/mall') ? 'MALL' : path === '/settings' || path.startsWith('/account') || path === '/services' ? 'COMMON' : path.startsWith('/reports') || path === '/overview' || path === '/login' || !path ? 'ALL' : 'DINING')
+    if (selected === 'ALL') return ['DINING', 'MALL', 'COMMON'].some(type => (type === 'COMMON' || canAccessProduct(type)) && hasAction(userInfo.value?.role, permissions.value, type, permission))
+    return hasAction(userInfo.value?.role, permissions.value, selected, permission)
+  }
+  function hasActionPermission(action, business, legacyPermission) {
+    return hasPermission(isV2Permissions(permissions.value) ? action : legacyPermission, business)
   }
 
   function setPermissions(newPermissions) {
@@ -128,6 +132,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     logout,
     hasPermission,
+    hasActionPermission,
     setPermissions,
     refresh
   }

@@ -2,9 +2,11 @@
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import request from '@/lib/request'
 import { mallText } from '@/lib/mall'
+import { useUserStore } from '@/stores/user'
 
 const props = defineProps({ app: { type: Number, required: true }, disabled: Boolean })
 const emit = defineEmits(['submit'])
+const user = useUserStore()
 const rows = ref([]), total = ref(0), page = ref(1), status = ref('PAID'), loading = ref(false), error = ref(''), carrier = ref(''), selected = reactive(new Map())
 const eligible = computed(() => rows.value.filter(row => row.fulfillmentType !== 'PICKUP'))
 const allSelected = computed(() => eligible.value.length > 0 && eligible.value.every(row => selected.has(row.id)))
@@ -26,6 +28,7 @@ function choose(row, checked) {
 function choosePage(checked) { for (const row of eligible.value) choose(row, checked) }
 function applyCarrier() { for (const draft of selected.values()) draft.carrier = carrier.value }
 function submit() {
+  if (props.disabled || !user.hasPermission('order:ship', 'MALL')) return
   error.value = ''
   if (!selected.size) { error.value = '请先选择待发货订单'; return }
   const drafts = [...selected.values()]

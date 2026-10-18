@@ -106,3 +106,31 @@ test('refund retries validate the original aftersale and refund number rather th
   assert.equal(helpers.verifyMallResult(operation, { id: 99, aftersaleId: 12, refundNo: 'MR-original', status: 'PROCESSING' }), true)
   assert.equal(helpers.verifyMallResult(operation, { id: 12, aftersaleId: 99, refundNo: 'MR-other' }), false)
 })
+
+test('read-only product staff cannot open or submit create, edit or stock operations', async () => {
+  const writes = []
+  const view = page({ post: async (...args) => writes.push(args), put: async (...args) => writes.push(args) }, memory(), 'products')
+  view.user.hasPermission = permission => permission === 'product:view'
+  for (const [type, row] of [['product', {}], ['product', { id: 4 }], ['stock', { id: 12 }], ['category', {}]]) view.open(type, row)
+  assert.equal(view.editor.value, '')
+  view.editor.value = 'product'; Object.assign(view.form, { id: 4, name: '只读商品', skus: [] })
+  await view.submit()
+  assert.equal(writes.length, 0)
+})
+
+test('dispatch authority cannot open pickup or edit products and permission loss blocks original retry', async () => {
+  const writes = [], storage = memory()
+  const view = page({ post: async (...args) => writes.push(args) }, storage)
+  view.user.hasPermission = permission => permission === 'order:view' || permission === 'order:ship'
+  view.open('pickup', { id: 4 }); assert.equal(view.editor.value, '')
+  view.open('product', { id: 4 }); assert.equal(view.editor.value, '')
+  view.open('ship', { id: 4 }); assert.equal(view.editor.value, 'ship')
+  const original = { ...op(), path: '/orders/4/ship', targetId: 4 }
+  helpers.retainMallPending(storage, 1, 7, 9, original)
+  const restored = page({ post: async (...args) => writes.push(args) }, storage)
+  restored.user.hasPermission = permission => permission === 'order:view'
+  await restored.recover()
+  assert.equal(writes.length, 0)
+  assert.equal(restored.pending.value.body.requestKey, original.body.requestKey)
+  assert.match(restored.error.value, /无权/)
+})
