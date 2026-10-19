@@ -5,7 +5,7 @@ import { useUserStore } from '@/stores/user'
 import { productNames, productStatuses, productAccessible, productTradable, firstProductPath } from '@/lib/products'
 const user = useUserStore(), router = useRouter(), route = useRoute(), loading = ref(false)
 async function load() { loading.value = true; try { await user.refreshProducts(true) } finally { loading.value = false } }
-const productHome = product => firstProductPath([product], permission => user.hasPermission(permission, product.productType))
+const productHome = product => firstProductPath([product], (permission, business) => user.hasPermission(permission, business))
 function enter(product) { router.push(productHome(product)) }
 onMounted(() => { if (!user.productsReady) load() })
 </script>

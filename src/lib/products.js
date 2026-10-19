@@ -5,19 +5,20 @@ export function productAccessible(product) { return !!product && product.history
 export function productTradable(product) { return productAccessible(product) && product.canTrade === true }
 const diningHomes = [
   ['/workbench', 'workbench:view'], ['/pos/index', 'pos:view'], ['/dining/seats', 'dining:view'], ['/dining/kitchen', 'kitchen:operate'],
-  ['/dining/services', ['service:operate', 'refund:view', 'refund:approve']], ['/dashboard', 'dashboard:view'], ['/orders', 'order:view'],
-  ['/products', 'product:view'], ['/refunds', ['refund:view', 'refund:approve']], ['/finance', 'finance:view'], ['/warehouse', 'warehouse:view'], ['/operations/overview', 'operations:view'], ['/settings', 'settings:view']
+  ['/dining/services', 'service:operate'], ['/dashboard', 'dashboard:view'], ['/orders', 'order:view'],
+  ['/products', 'product:view'], ['/refunds', ['refund:view', 'refund:approve']], ['/finance', 'finance:view'], ['/warehouse', 'warehouse:view'], ['/operations/overview', 'operations:view'], ['/dining/settings', 'settings:view']
 ]
 const mallHomes = [['/mall/orders', 'order:view'], ['/mall/products', 'product:view'], ['/mall/aftersales', ['refund:view', 'refund:approve']], ['/mall/report', 'finance:view'], ['/mall/settings', 'settings:view']]
 export function firstProductPath(products, hasPermission) {
   const accessible = products.filter(productAccessible)
   const overviewPermissions = ['dashboard:view', 'finance:view', 'order:view', 'workbench:view', 'pos:view', 'refund:view', 'refund:approve', 'warehouse:view', 'operations:view', 'product:view', 'kitchen:operate', 'service:operate', 'dining:view']
-  if (accessible.length && overviewPermissions.some(hasPermission)) return accessible.length > 1 ? '/overview' : `/overview?business=${accessible[0].productType}`
+  const overviewBusinesses = accessible.filter(product => overviewPermissions.some(permission => hasPermission(permission, product.productType)))
+  if (overviewBusinesses.length) return overviewBusinesses.length > 1 ? '/overview' : `/overview?business=${overviewBusinesses[0].productType}`
   const choices = [['DINING', diningHomes], ['MALL', mallHomes]]
   choices.sort(([a], [b]) => Number(productTradable(findProduct(products, b))) - Number(productTradable(findProduct(products, a))))
   for (const [type, homes] of choices) {
     if (!productAccessible(findProduct(products, type))) continue
-    const entry = homes.find(([, permission]) => hasPermission(permission))
+    const entry = homes.find(([, permission]) => hasPermission(permission, type))
     if (entry) return entry[0]
   }
   return '/services'

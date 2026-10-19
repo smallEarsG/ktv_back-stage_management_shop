@@ -4,6 +4,7 @@ import Login from '@/views/Login.vue'
 import { useUserStore } from '@/stores/user'
 import { routeProduct } from '@/lib/products'
 import { insightPermissions } from '@/lib/business'
+import { ElMessage } from 'element-plus'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -19,6 +20,12 @@ const router = createRouter({
       name: '403',
       component: () => import('@/views/403.vue'),
       meta: { title: '无权限' }
+    },
+    {
+      path: '/connection',
+      name: 'ConnectionRetry',
+      component: () => import('@/views/ConnectionRetry.vue'),
+      meta: { title: '连接恢复' }
     },
     {
       path: '/',
@@ -120,8 +127,21 @@ const router = createRouter({
 router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   if (to.meta.requiresAuth && userStore.token) {
-    try { await userStore.refresh() } catch { userStore.logout(); next('/login'); return }
-    await userStore.refreshProducts()
+    try {
+      await userStore.refresh()
+      await userStore.refreshProducts()
+      if (!userStore.productsReady) throw new Error(userStore.productsError || '产品授权暂时无法查询')
+    }
+    catch (error) {
+      if (!userStore.token || error.code === 401 || error.response?.status === 401) {
+        userStore.logout(); next('/login')
+      } else {
+        ElMessage.error('暂时无法核对登录状态，已保留登录，请重试')
+        if (from.name || from.matched?.length) next(false)
+        else next({ path: '/connection', query: { next: to.fullPath || to.path }, replace: true })
+      }
+      return
+    }
   }
   if (to.meta.requiresAuth && !userStore.token) {
     next('/login')

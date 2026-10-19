@@ -22,7 +22,7 @@ export const useUserStore = defineStore('user', () => {
   const userInfo = ref(storedUserInfo)
   const permissions = ref(userInfo.value?.permissions || []) 
   const products = ref([]), productsReady = ref(false), productsError = ref('')
-  let productsRefresh = 0, productGeneration = 0
+  let productsRefresh = 0, productGeneration = 0, sessionGeneration = 0, refreshGeneration = 0
   const router = useRouter()
 
   async function refreshProducts(force = false) {
@@ -40,24 +40,32 @@ export const useUserStore = defineStore('user', () => {
   const product = type => findProduct(products.value, type)
   const canAccessProduct = type => productsReady.value && productAccessible(product(type)) && businessAllowed(userInfo.value?.role, permissions.value, type)
   const canTradeProduct = type => canAccessProduct(type) && productTradable(product(type))
-  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), permission => hasPermission(permission, 'ALL'))
+  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), hasPermission)
 
   let lastRefresh = 0
   async function refresh(force = false) {
     if (!token.value || (!force && Date.now() - lastRefresh < 30000)) return
-    const user = await request.get('/auth/user', { silent: true })
-    userInfo.value = user
-    permissions.value = user.permissions || []
-    authStorage.setItem('userInfo', JSON.stringify(user))
-    lastRefresh = Date.now()
+    const generation = ++refreshGeneration, session = sessionGeneration, expectedToken = token.value, expectedStore = currentStoreId.value
+    const current = () => generation === refreshGeneration && session === sessionGeneration && token.value === expectedToken && currentStoreId.value === expectedStore
+    try {
+      const user = await request.get('/auth/user', { silent: true })
+      if (!current()) return
+      userInfo.value = user
+      permissions.value = user.permissions || []
+      authStorage.setItem('userInfo', JSON.stringify(user))
+      lastRefresh = Date.now()
+    } catch (error) { if (current()) throw error }
   }
 
   async function login(loginForm) {
+    const session = ++sessionGeneration
+    refreshGeneration++
     try {
       const res = await request.post('/auth/login', {
         phone: loginForm.phone, // Convert phone to username for API
         password: loginForm.password
       })
+      if (session !== sessionGeneration) return false
       
       const accessToken = res?.token || res?.accessToken || res?.data?.token
       const user = res?.userInfo || res?.user || res?.data?.userInfo || res?.data?.user || {}
@@ -83,13 +91,11 @@ export const useUserStore = defineStore('user', () => {
       products.value = []; productsReady.value = false; productsRefresh = 0
       await refreshProducts(true)
       return true
-    } catch (error) {
-      console.error('Login failed:', error)
-      return false
-    }
+    } catch { return false }
   }
 
   function logout() {
+    sessionGeneration++; refreshGeneration++
     productGeneration++; products.value = []; productsReady.value = false; productsError.value = ''; productsRefresh = 0
     lastRefresh = 0
     token.value = null
