@@ -1,14 +1,16 @@
 <script setup>
 import { useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const user = useUserStore()
 
 const goBack = () => {
   router.back()
 }
 
 const goHome = () => {
-  router.push('/')
+  router.push(user.homePath())
 }
 </script>
 

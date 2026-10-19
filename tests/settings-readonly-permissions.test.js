@@ -10,7 +10,7 @@ function settingsPage(permissions, role = 'staff') {
   const calls = [], user = reactive({ permissions, userInfo: { role }, currentStoreId: 1,
     canAccessProduct: () => true,
     hasPermission: (permission, business = 'COMMON') => hasAction(role, permissions, business, permission) })
-  const sandbox = { ref, reactive, computed, isV2Permissions, useUserStore: () => user, watch() {}, onMounted() {},
+  const sandbox = { ref, reactive, computed, isV2Permissions, useUserStore: () => user, watch() {}, onMounted() {}, onBeforeUnmount() {},
     request: Object.fromEntries(['get', 'post', 'put', 'delete'].map(method => [method, async (...args) => { calls.push([method, ...args]); return {} }])),
     ElMessage: { warning() {}, success() {} }, ElMessageBox: { confirm: async () => {} }, console }
   vm.createContext(sandbox)

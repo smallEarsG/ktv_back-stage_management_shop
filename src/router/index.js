@@ -129,8 +129,10 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth && userStore.token) {
     try {
       await userStore.refresh()
-      await userStore.refreshProducts()
-      if (!userStore.productsReady) throw new Error(userStore.productsError || '产品授权暂时无法查询')
+      if (!userStore.userInfo?.passwordChangeRequired) {
+        await userStore.refreshProducts()
+        if (!userStore.productsReady) throw new Error(userStore.productsError || '产品授权暂时无法查询')
+      }
     }
     catch (error) {
       if (!userStore.token || error.code === 401 || error.response?.status === 401) {

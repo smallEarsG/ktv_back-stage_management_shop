@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, reactive, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/lib/request'
 import { authStorage } from '@/lib/auth-storage'
@@ -52,6 +52,12 @@ const roomQuery = reactive({
   keyword: ''
 })
 const roomDialogVisible = ref(false)
+const roomDetailLoading = ref(false), roomSaving = ref(false), roomReady = ref(false), roomError = ref(''), roomEditId = ref(null)
+let roomGeneration = 0, roomDisposed = false
+watch(roomDialogVisible, visible => {
+  if (!visible) { roomGeneration++; roomReady.value = false; roomDetailLoading.value = false; roomSaving.value = false }
+}, { flush: 'sync' })
+onBeforeUnmount(() => { roomDisposed = true; roomGeneration++ })
 const roomFormRef = ref(null)
 const roomForm = reactive({
   id: null,
@@ -309,54 +315,65 @@ const resetRoomForm = () => {
 }
 
 const handleAddRoom = () => {
-  if (!canEditRooms.value) return
+  if (roomDisposed || !canEditRooms.value) return
+  roomGeneration++; roomEditId.value = null; roomDetailLoading.value = false; roomSaving.value = false; roomError.value = ''
   resetRoomForm()
+  roomReady.value = true
   roomDialogVisible.value = true
 }
 
 const handleEditRoom = async (row) => {
-  if (!canEditRooms.value) return
+  if (roomDisposed || !canEditRooms.value) return
+  const generation = ++roomGeneration, target = row.id
+  const current = () => !roomDisposed && generation === roomGeneration && roomDialogVisible.value && roomEditId.value === target
+  roomEditId.value = target; roomDetailLoading.value = true; roomSaving.value = false; roomReady.value = false; roomError.value = ''
   resetRoomForm()
+  roomForm.id = target
   roomDialogVisible.value = true
   try {
-    const res = await request.get(`/rooms/${row.id}`)
-    roomForm.id = res?.id ?? row.id
+    const res = await request.get(`/rooms/${target}`)
+    if (!current()) return
+    if (!res?.id || String(res.id) !== String(target)) throw new Error('房间资料与当前选择不一致，请重新打开')
+    roomForm.id = target
     roomForm.roomNumber = res?.roomNumber ?? row.roomNumber ?? ''
     roomForm.type = res?.type ?? row.type ?? ''
     roomForm.capacity = Number(res?.capacity ?? row.capacity ?? 0) || 0
     roomForm.qrCodeUrl = res?.qrCodeUrl ?? row.qrCodeUrl ?? ''
     roomForm.isAvailable = res?.isAvailable !== false
+    roomReady.value = true
   } catch (error) {
-    console.error(error)
-  }
+    if (current()) roomError.value = error.message || '房间详情加载失败，请关闭后重新打开'
+  } finally { if (current()) roomDetailLoading.value = false }
 }
 
 const submitRoom = async () => {
-  if (!canEditRooms.value) return
-  if (!roomFormRef.value) return
-  await roomFormRef.value.validate(async (valid) => {
-    if (!valid || !canEditRooms.value) return
-    try {
-      const body = {
-        roomNumber: roomForm.roomNumber,
-        type: roomForm.type,
-        capacity: Number(roomForm.capacity),
-        qrCodeUrl: roomForm.qrCodeUrl || undefined,
-        isAvailable: roomForm.isAvailable
-      }
-      if (roomForm.id) {
-        await request.put(`/rooms/${roomForm.id}`, body)
-        ElMessage.success('更新成功')
-      } else {
-        await request.post('/rooms', body)
-        ElMessage.success('添加成功')
-      }
-      roomDialogVisible.value = false
-      getRoomList()
-    } catch (error) {
-      console.error(error)
+  if (!canEditRooms.value || !roomFormRef.value || !roomDialogVisible.value || !roomReady.value || roomDetailLoading.value || roomSaving.value) return
+  const generation = roomGeneration, target = roomEditId.value
+  const current = () => !roomDisposed && generation === roomGeneration && roomDialogVisible.value && roomEditId.value === target
+  roomSaving.value = true
+  try {
+    let valid
+    try { valid = await roomFormRef.value.validate() } catch { return }
+    if (!valid || !current() || !roomReady.value || !canEditRooms.value) return
+    const body = {
+      roomNumber: roomForm.roomNumber,
+      type: roomForm.type,
+      capacity: Number(roomForm.capacity),
+      qrCodeUrl: roomForm.qrCodeUrl || undefined,
+      isAvailable: roomForm.isAvailable
     }
-  })
+    if (target) {
+      await request.put(`/rooms/${target}`, body)
+    } else {
+      await request.post('/rooms', body)
+    }
+    if (!current()) return
+    ElMessage.success(target ? '更新成功' : '添加成功')
+    roomDialogVisible.value = false
+    getRoomList()
+  } catch (error) {
+    if (current()) roomError.value = error.message || '保存失败，请核对后重试'
+  } finally { if (current()) roomSaving.value = false }
 }
 
 const handleDeleteRoom = (row) => {
@@ -489,8 +506,9 @@ watch(activeTab, (val) => {
           </el-table-column>
         </el-table>
 
-        <el-dialog v-model="roomDialogVisible" :title="roomForm.id ? '编辑房间' : '添加房间'" width="520px">
-          <el-form :model="roomForm" :rules="roomRules" ref="roomFormRef" label-width="90px">
+        <el-dialog v-model="roomDialogVisible" :title="roomEditId ? '编辑房间' : '添加房间'" width="520px">
+          <el-alert v-if="roomError" :title="roomError" type="error" :closable="false" class="mb-4" />
+          <el-form v-loading="roomDetailLoading" :disabled="!roomReady || roomDetailLoading || roomSaving" :model="roomForm" :rules="roomRules" ref="roomFormRef" label-width="90px">
             <el-form-item label="房间号" prop="roomNumber">
               <el-input v-model="roomForm.roomNumber" placeholder="例如 A01" />
             </el-form-item>
@@ -512,7 +530,7 @@ watch(activeTab, (val) => {
           <template #footer>
             <span class="dialog-footer">
               <el-button @click="roomDialogVisible = false">取消</el-button>
-              <el-button type="primary" :disabled="!canEditRooms" @click="submitRoom">确定</el-button>
+              <el-button type="primary" :loading="roomSaving" :disabled="!canEditRooms || !roomReady || roomDetailLoading" @click="submitRoom">确定</el-button>
             </span>
           </template>
         </el-dialog>

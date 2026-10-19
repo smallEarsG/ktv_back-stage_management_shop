@@ -26,6 +26,10 @@ export const useUserStore = defineStore('user', () => {
   const router = useRouter()
 
   async function refreshProducts(force = false) {
+    if (userInfo.value?.passwordChangeRequired) {
+      productGeneration++; products.value = []; productsReady.value = false; productsError.value = ''; productsRefresh = 0
+      return
+    }
     if (!token.value || (!force && productsReady.value && Date.now() - productsRefresh < 30000)) return
     const generation = ++productGeneration
     try {
@@ -38,9 +42,9 @@ export const useUserStore = defineStore('user', () => {
     }
   }
   const product = type => findProduct(products.value, type)
-  const canAccessProduct = type => productsReady.value && productAccessible(product(type)) && businessAllowed(userInfo.value?.role, permissions.value, type)
+  const canAccessProduct = type => !userInfo.value?.passwordChangeRequired && productsReady.value && productAccessible(product(type)) && businessAllowed(userInfo.value?.role, permissions.value, type)
   const canTradeProduct = type => canAccessProduct(type) && productTradable(product(type))
-  const homePath = () => firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), hasPermission)
+  const homePath = () => userInfo.value?.passwordChangeRequired ? '/account/security' : firstProductPath(products.value.filter(p => businessAllowed(userInfo.value?.role, permissions.value, p.productType)), hasPermission)
 
   let lastRefresh = 0
   async function refresh(force = false) {
@@ -88,8 +92,8 @@ export const useUserStore = defineStore('user', () => {
       
       authStorage.setItem('token', accessToken)
       authStorage.setItem('userInfo', JSON.stringify(user))
-      products.value = []; productsReady.value = false; productsRefresh = 0
-      await refreshProducts(true)
+      productGeneration++; products.value = []; productsReady.value = false; productsError.value = ''; productsRefresh = 0
+      if (!user.passwordChangeRequired) await refreshProducts(true)
       return true
     } catch { return false }
   }
