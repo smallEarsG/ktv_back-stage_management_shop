@@ -10,14 +10,16 @@ import CashierPaymentDialog from '@/components/CashierPaymentDialog.vue'
 import RoomBalanceDialog from '@/components/RoomBalanceDialog.vue'
 import CashierMemberPicker from '@/components/CashierMemberPicker.vue'
 import { cashierReceipt, recoveryKey } from '@/lib/cashier-result'
-import { cashierWorkspaceKey, cloneCart, readCashierWorkspace, writeCashierWorkspace, cashChange, roomBalancesById } from '@/lib/cashier-workspace'
+import { cashierWorkspaceKey, cloneCart, legacyWorkspaceHasOnlyDrafts, readCashierWorkspace, writeCashierWorkspace, cashChange, roomBalancesById } from '@/lib/cashier-workspace'
 
 const userStore = useUserStore()
-const recoveryStorage = createRecoveryStorage(localStorage, userStore.userInfo?.id)
 const recoverySessionStorage = createRecoveryStorage(sessionStorage, userStore.userInfo?.id)
 const currentStoreId = computed(() => userStore.currentStoreId || '')
 const currentUserId = computed(() => userStore.userInfo?.id || userStore.userInfo?.userId || '')
 const workspaceKey = cashierWorkspaceKey(currentStoreId.value, currentUserId.value)
+// Legacy drafts cannot be assigned to this environment, but contain no submitted write.
+// Retain them untouched; only an actual pending submission needs to block new sales.
+const recoveryStorage = createRecoveryStorage(localStorage, userStore.userInfo?.id, undefined, { isNonTransactionalLegacy: (key, raw) => key === workspaceKey && legacyWorkspaceHasOnlyDrafts(raw) })
 const storageError = ref('')
 let workspaceReadable = true
 let restored = { drafts: {}, pending: null }

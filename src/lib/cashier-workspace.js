@@ -1,6 +1,13 @@
 export const cashierWorkspaceKey = (store, user) => `cashier-workspace:v1:${store}:${user}`
 export const cloneCart = items => JSON.parse(JSON.stringify(items || []))
 
+export function legacyWorkspaceHasOnlyDrafts(raw) {
+  try {
+    const state = JSON.parse(raw)
+    return state?.version === 1 && state.pending === null && !!state.drafts && typeof state.drafts === 'object' && !Array.isArray(state.drafts)
+  } catch { return false }
+}
+
 export function readCashierWorkspace(storage, key) {
   const raw = storage.getItem(key)
   if (!raw) return { drafts: {}, pending: null }

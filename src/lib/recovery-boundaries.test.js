@@ -46,7 +46,7 @@ function page(kind, memory, env = 'demo', response = 'lost', actor = 9) {
     }
   }
   const context = { ...vue, ...operations, ...birthdays, ...dining, ...mall, ...mall2, ...editor, ...workspace, ...result, dayjs,
-    request, localStorage: memory, sessionStorage: nativeStorage, createRecoveryStorage: (raw, id) => createRecoveryStorage(raw, id, environment(env)), canReleaseRecovery,
+    request, localStorage: memory, sessionStorage: nativeStorage, createRecoveryStorage: (raw, id, unused, options) => createRecoveryStorage(raw, id, environment(env), options), canReleaseRecovery,
     useUserStore: () => user, useRoute: () => ({ meta: { operationTab: 'members', diningTab: 'seats', mallTab: 'products', mallGrowth: 'batch' }, query: {} }), useRouter: () => ({ push() {} }),
     onMounted() {}, onBeforeUnmount: fn => cleanup.push(fn), defineProps: () => props, defineEmits: () => () => {},
     setInterval: () => 1, clearInterval() {}, crypto: { randomUUID: () => `uuid-${++sequence}` }, console: { error() {} }, ElMessage: { success() {}, error() {}, warning() {} }, ElMessageBox: { confirm: async () => {} }
@@ -110,4 +110,11 @@ test('damaged dining recovery blocks new goods and cash writes without overwriti
   scoped.setItem('dining-recovery:1:9','broken-json')
   const p=page('dining',raw)
   try { await p.openOrder(); assert.equal(p.orderVisible.value,false); p.currentSession.value={id:12}; p.orders.value=[{id:34,amountTotal:72,payMethod:3,payStatus:0,status:20}];p.selectedOrders.value=[34];p.tender.value=80;await vue.nextTick();p.cashConfirmed.value=true;await p.collectCash();await p.recover();assert.equal(p.writes.length,0);assert.equal(scoped.getItem('dining-recovery:1:9'),'broken-json') } finally { p.stop() }
+})
+
+test('legacy cashier drafts with no submitted transaction remain untouched without blocking new sales',async()=>{
+  const raw=storage(), original=JSON.stringify({version:1,drafts:{101:[{skuId:8,qty:2}]},pending:null})
+  raw.setItem(legacyKeys.pos,original)
+  const p=page('pos',raw,'production')
+  try {assert.equal(p.pendingSubmission.value,null);assert.equal(p.persistWorkspace(),true);assert.equal(raw.getItem(legacyKeys.pos),original);assert.equal(p.writes.length,0)}finally{p.stop()}
 })
