@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Search, Check, Plus, Minus, Delete, ShoppingCart } from '@element-plus/icons-vue'
 import request from '@/lib/request'
@@ -12,13 +13,15 @@ import { cashierReceipt, recoveryKey } from '@/lib/cashier-result'
 import { cashierWorkspaceKey, cloneCart, readCashierWorkspace, writeCashierWorkspace, cashChange, roomBalancesById } from '@/lib/cashier-workspace'
 
 const userStore = useUserStore()
+const recoveryStorage = createRecoveryStorage(localStorage, userStore.userInfo?.id)
+const recoverySessionStorage = createRecoveryStorage(sessionStorage, userStore.userInfo?.id)
 const currentStoreId = computed(() => userStore.currentStoreId || '')
 const currentUserId = computed(() => userStore.userInfo?.id || userStore.userInfo?.userId || '')
 const workspaceKey = cashierWorkspaceKey(currentStoreId.value, currentUserId.value)
 const storageError = ref('')
 let workspaceReadable = true
 let restored = { drafts: {}, pending: null }
-try { restored = readCashierWorkspace(localStorage, workspaceKey) } catch {
+try { restored = readCashierWorkspace(recoveryStorage, workspaceKey) } catch {
   workspaceReadable = false
   storageError.value = '草稿恢复信息无法读取，暂不能开新单，请联系店长核对原订单。'
 }
@@ -69,7 +72,7 @@ const selectCashReceived = amount => {
 const cashierLocked = computed(() => submitting.value || !!pendingSubmission.value || cashDialogVisible.value)
 const persistWorkspace = () => {
   if (!workspaceReadable) return false
-  try { writeCashierWorkspace(localStorage, workspaceKey, drafts, pendingSubmission.value); storageError.value = ''; return true }
+  try { writeCashierWorkspace(recoveryStorage, workspaceKey, drafts, pendingSubmission.value); storageError.value = ''; return true }
   catch { storageError.value = '无法保存草稿和订单恢复信息，请检查浏览器存储后重试。'; return false }
 }
 watch(cartItems, items => {
@@ -89,11 +92,11 @@ const payDialogInfo = ref(null)
 const wechatEnabled = ref(false)
 const receipt = computed(() => cashierReceipt(submittedOrder.value))
 const recoveryStorageKey = () => recoveryKey(userStore.currentStoreId, userStore.userInfo?.id)
-const retainPayment = order => { try { sessionStorage.setItem(recoveryStorageKey(), String(order.orderId || order.id)) } catch { /* The order list remains the recovery entry. */ } }
-const paymentUpdated = order => { submittedOrder.value = order; payDialogInfo.value = order; if (Number(order.payStatus) === 2 || Number(order.status) === 90) { try { sessionStorage.removeItem(recoveryStorageKey()) } catch { /* No stored state. */ } } }
+const retainPayment = order => { try { recoverySessionStorage.setItem(recoveryStorageKey(), String(order.orderId || order.id)) } catch { /* The order list remains the recovery entry. */ } }
+const paymentUpdated = order => { submittedOrder.value = order; payDialogInfo.value = order; if (Number(order.payStatus) === 2 || Number(order.status) === 90) { try { recoverySessionStorage.removeItem(recoveryStorageKey()) } catch { /* No stored state. */ } } }
 const paymentConfirmed = async order => { paymentUpdated(order); await loadBalances() }
 const recoverPayment = async () => {
-  let id; try { id = sessionStorage.getItem(recoveryStorageKey()) } catch { return }
+  let id; try { id = recoverySessionStorage.getItem(recoveryStorageKey()) } catch { return }
   if (!id || !/^[0-9]+$/.test(id)) return
   try { const order = await request.get(`/orders/${id}`); paymentUpdated(order) } catch { /* Keep the ID for an explicit retry from the order list. */ }
 }
@@ -489,7 +492,7 @@ const postSubmission = async (body) => {
     await finishSubmission(res, body)
   } catch (e) {
     if (disposed) return
-    if (e.definitive || [400, 401, 403, 409, 422].includes(e.response?.status)) {
+    if (canReleaseRecovery(e)) {
       pendingSubmission.value = null
       persistWorkspace()
       submitError.value = e.response?.data?.message || e.message || '订单未创建，请检查商品和金额后重试。'

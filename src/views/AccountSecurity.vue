@@ -5,13 +5,16 @@ import request from '@/lib/request'
 import { ElMessage } from 'element-plus'
 const user = useUserStore(), busy = ref(false), error = ref('')
 const form = reactive({ currentPassword: '', newPassword: '', confirmPassword: '' })
-onBeforeUnmount(() => { Object.assign(form, { currentPassword: '', newPassword: '', confirmPassword: '' }) })
+let disposed = false
+onBeforeUnmount(() => { disposed = true; Object.assign(form, { currentPassword: '', newPassword: '', confirmPassword: '' }) })
 async function submit() {
   if (busy.value) return
   if (!form.currentPassword || form.newPassword.length < 8 || new TextEncoder().encode(form.newPassword).length > 72 || form.newPassword !== form.confirmPassword) { error.value = '请填写原密码，设置至少8位的新密码并保持两次输入一致'; return }
   busy.value = true; error.value = ''
-  try { await request.post('/auth/password', { ...form }); ElMessage.success('密码已修改，请使用新密码重新登录'); user.logout() }
-  catch (e) { error.value = e.message || '修改结果未确认，请用新密码登录核对' }
+  const token = user.token, userId = user.userInfo?.id
+  const current = () => !disposed && token === user.token && userId === user.userInfo?.id
+  try { await request.post('/auth/password', { ...form }); if (current()) { ElMessage.success('密码已修改，请使用新密码重新登录'); user.logout() } }
+  catch (e) { if (current()) error.value = e.message || '修改结果未确认，请用新密码登录核对' }
   finally { busy.value = false; Object.assign(form, { currentPassword: '', newPassword: '', confirmPassword: '' }) }
 }
 </script>

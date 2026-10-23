@@ -5,18 +5,44 @@ import vm from 'node:vm'
 import { computed, effectScope, reactive, ref, watch } from 'vue'
 import { inventorySummary, skuInventory } from './inventory.js'
 import { newRequestKey } from './operations.js'
+import { createRecoveryStorage, canReleaseRecovery } from './recovery-storage.js'
 
 const product = { id: 2, name: '果味饮品', stock: 994, status: true, skus: [
   { id: 2, stockQuantity: 494, skuSpecs: '{"杯型":"中杯"}', lowStockThreshold: 10 },
   { id: 3, stockQuantity: 500, skuSpecs: '{"杯型":"大杯"}', lowStockThreshold: 10 }
 ] }
 
+test('category save serializes double-clicks before the original response', async () => {
+  let finish, writes = 0
+  const page = view('products/ProductList.vue', ['handleAddCategory', 'addCategoryForm'], {
+    post: () => { writes++; return new Promise(resolve => { finish = resolve }) }, get: async () => ({ list: [] })
+  })
+  try {
+    page.addCategoryForm.name = '唯一一次新增'
+    const first = page.handleAddCategory(), second = page.handleAddCategory()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(writes, 1); finish({}); await Promise.all([first, second])
+  } finally { page.stop() }
+})
+
+test('category response loss blocks another create until the list has been checked', async () => {
+  let writes = 0
+  const page = view('products/ProductList.vue', ['handleAddCategory', 'addCategoryForm'], {
+    post: async () => { writes++; throw new Error('response lost') }, get: async () => ({ list: [] })
+  })
+  try {
+    page.addCategoryForm.name = '未知结果'
+    await page.handleAddCategory(); await page.handleAddCategory()
+    assert.equal(writes, 1)
+  } finally { page.stop() }
+})
+
 function view(path, names, request = {}) {
   const source = fs.readFileSync(new URL(`../views/${path}`, import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replaceAll('import.meta.env.VITE_API_BASE_URL', "'/api'")
   const scope = effectScope()
   const saved = new Map(), disposers = []
-  const sandbox = { ref, reactive, computed, watch, inventorySummary, skuInventory, newRequestKey, onMounted: () => {}, onBeforeUnmount: callback => disposers.push(callback), useRouter: () => ({ push: () => {} }),
+  const sandbox = { ref, reactive, computed, watch, inventorySummary, skuInventory, newRequestKey, createRecoveryStorage: (storage, actor) => createRecoveryStorage(storage, actor, { VITE_API_BASE_URL: '/api', BASE_URL: '/merchant/' }), canReleaseRecovery, onMounted: () => {}, onBeforeUnmount: callback => disposers.push(callback), useRouter: () => ({ push: () => {} }),
     localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
     useRoute: () => ({ query: {} }), useUserStore: () => ({ hasPermission: () => true, currentStoreId: 1, userInfo: { id: 1 } }),
     request, console: { error: () => {} }, ElMessage: { error: () => {}, success: () => {}, warning: () => {} },

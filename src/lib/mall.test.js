@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -11,7 +12,7 @@ const memory = () => { const values = new Map(); return { getItem: key => values
 const op = () => ({ path: '/skus/12/stock', body: { requestKey: 'original-key', expectedVersion: 1, delta: 2, reason: '盘点' }, targetId: 12, label: '库存调整', createdAt: '2026-10-17T00:00:00Z' })
 function page(request = {}, storage = memory(), tab = 'orders') {
   const user = { currentStoreId: 1, userInfo: { id: 9 }, product: () => ({ application: { id: 7 } }), canTradeProduct: () => true, hasPermission: () => true }
-  const sandbox = { ...helpers, skuFields, skuPayload, canReleaseMallIntent, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ...helpers, skuFields, skuPayload, canReleaseMallIntent, ref, computed, reactive, useRoute: () => ({ meta: { mallTab: tab } }), useUserStore: () => user, request: { get: async () => ({ list: [], total: 0 }), ...request }, newRequestKey: () => 'generated-key', localStorage: storage, onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {}, warning() {} }, FormData, console }
   vm.createContext(sandbox)
   const source = fs.readFileSync(new URL('../views/mall/MallConsole.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   vm.runInContext(source + '\napi = { load, loadCapabilities, perform, recover, open, submit, form, editor, editorUncertain, rows, error, pending, recoveryError, capabilities, capabilityError, selectQueue, queue, status, page, queueCounts, quickFulfill };', sandbox)

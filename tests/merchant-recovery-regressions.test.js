@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from '../src/lib/recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -157,7 +158,7 @@ function catalogEditor(grants) {
   const writes = []
   const user = { currentStoreId: 88, userInfo: { id: 9 }, permissions: grants, product: () => ({ application: { id: 7 } }), canTradeProduct: () => true,
     hasPermission: (action, scope = 'MALL', legacy) => permissions.hasAction('staff', grants, scope, legacy && !permissions.isV2Permissions(grants) ? legacy : action) }
-  const context = { ...mall, skuFields, skuPayload, canReleaseMallIntent, isV2Permissions: permissions.isV2Permissions, computed, reactive, ref, useUserStore: () => user,
+  const context = { createRecoveryStorage: raw => raw, canReleaseRecovery, ...mall, skuFields, skuPayload, canReleaseMallIntent, isV2Permissions: permissions.isV2Permissions, computed, reactive, ref, useUserStore: () => user,
     useRoute: () => ({ meta: { mallTab: 'products' }, query: {} }), newRequestKey: () => 'test-request', onMounted() {}, onBeforeUnmount() {},
     localStorage: { getItem: () => null }, ElMessage: { warning() {}, success() {} }, console,
     request: { get: async () => ({ list: [] }), post: async (path, body) => { writes.push({ path, body }); return { id: 1 } }, put: async (path, body) => { writes.push({ path, body }); return { id: body.id || 1 } } } }

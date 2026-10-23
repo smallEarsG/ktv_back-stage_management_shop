@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage } from '@/lib/recovery-storage'
 import MallMemberRules from '@/components/MallMemberRules.vue'
 import MallBatchShipping from './MallBatchShipping.vue'
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
@@ -11,6 +12,7 @@ import { mallMoney, mallDate, mallProvinces } from '@/lib/mall'
 import { phase2Text, parseBatchCsv, downloadCsv, canReleaseMallIntent, memberTiersForForm, memberTiersForSave } from '@/lib/mall2'
 
 const route = useRoute(), user = useUserStore(), tab = route.meta.mallGrowth
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
 const app = user.product('MALL')?.application?.id, root = `/mall/apps/${app}/v2`
 const title = { members: '商城会员', 'member-rules': '会员规则与等级', coupons: '商城优惠券', shipping: '配送与物流', batch: '批量工作台', sharing: '点餐与商城共享' }[tab]
 const batchRevision = ref(0), memberRulesDirty = ref(false)
@@ -18,7 +20,7 @@ const batchMode = route.query.mode || 'all'
 const basicDelivery = reactive({})
 const config = reactive({}), shipping = reactive({}), sharing = reactive({})
 const list = ref([]), coupons = ref([]), candidates = ref([]), bindings = ref([]), mallSkus = ref([]), integrations = ref([])
-const page = ref(1), total = ref(0), birthdays = ref(false), loading = ref(false), loaded = ref(false), busy = ref(false), error = ref(''), result = ref(null), pending = ref(null)
+const page = ref(1), total = ref(0), birthdays = ref(false), loading = ref(false), loaded = ref(false), busy = ref(false), error = ref(''), recoveryError = ref(''), result = ref(null), pending = ref(null)
 const editor = ref(''), form = reactive({}), csv = ref(''), preview = ref(null), batchCsv = ref(''), exportForm = reactive({ startsOn: route.query.startsOn || '', endsOn: route.query.endsOn || '', reason: '' }), ledger = ref(null), ledgerOpen = ref(false)
 const canEdit = computed(() => user.hasPermission('settings:edit')), blocked = computed(() => busy.value || !!pending.value)
 const canEditMembers = computed(() => user.hasPermission('operations:edit', 'MALL'))
@@ -38,7 +40,7 @@ function editorAllowed(type) { return type === 'coupon' ? canManageCoupons.value
 const storageKey = `mall-growth:${user.currentStoreId}:${app}:${user.userInfo?.id}`
 let disposed = false, loadGeneration = 0
 let ledgerGeneration = 0
-try { const raw = localStorage.getItem(storageKey); if (raw) pending.value = JSON.parse(raw) } catch { error.value = '原操作恢复记录无法读取，请联系店长核对'; pending.value = { damaged: true } }
+try { const raw = recoveryStorage.getItem(storageKey); if (raw) pending.value = JSON.parse(raw) } catch (e) { recoveryError.value = e.code === 'RECOVERY_LEGACY' ? e.message : '原操作恢复记录无法读取，请联系店长核对；原记录已保留。'; pending.value = { damaged: true } }
 function replace(target, value) { Object.keys(target).forEach(key => delete target[key]); Object.assign(target, value) }
 async function load() {
   const generation = ++loadGeneration
@@ -84,7 +86,7 @@ async function submit() {
 async function send(path, body = {}, method = 'post') {
   if (blocked.value || !actionPermission(path)) return
   const operation = { path, body: { ...body, requestKey: newRequestKey() }, method }
-  try { localStorage.setItem(storageKey, JSON.stringify(operation)); pending.value = operation } catch { error.value = '无法保存操作恢复记录，暂不能提交'; return }
+  try { recoveryStorage.setItem(storageKey, JSON.stringify(operation)); pending.value = operation } catch { error.value = '无法保存操作恢复记录，暂不能提交'; return }
   return recover()
 }
 async function recover() {
@@ -93,8 +95,8 @@ async function recover() {
   if (!actionPermission(operation.path)) { error.value = '当前账号无权重试原操作，请联系店长核对'; return }
   if (!/^\/(coupons(?:\/\d+)?|members\/\d+\/mock-topup|sharing\/(?:inventory(?:\/\d+\/unbind)?|copy-product)|birthday-run|import-confirm|batch-ship|order-export|integrations\/(?:TRACKING|WAYBILL|LOCAL_DELIVERY)\/simulate)$/.test(operation.path) || !['post', 'put'].includes(operation.method) || !operation.body?.requestKey) { error.value = '原操作格式无法确认，请联系店长核对'; return }
   busy.value = true; error.value = ''
-  try { const value = await request[operation.method](`${root}${operation.path}`, operation.body, { timeout: 60000, silent: true }); if (disposed) return; result.value = value; if (value.list?.some(row => row.status === 'UNKNOWN')) { error.value = '部分结果未确认，请保留原批次并点击原请求重试'; return } if (operation.path === '/batch-ship') batchRevision.value++; localStorage.removeItem(storageKey); pending.value = null; editor.value = ''; if (value.csv) downloadCsv(value.fileName, value.csv); ElMessage.success('操作结果已返回'); await load() }
-  catch (e) { if (!disposed) { error.value = e.message || '结果待确认，请保留原请求重试'; if (canReleaseMallIntent(e)) { localStorage.removeItem(storageKey); pending.value = null } } }
+  try { const value = await request[operation.method](`${root}${operation.path}`, operation.body, { timeout: 60000, silent: true }); if (disposed) return; result.value = value; if (value.list?.some(row => row.status === 'UNKNOWN')) { error.value = '部分结果未确认，请保留原批次并点击原请求重试'; return } if (operation.path === '/batch-ship') batchRevision.value++; recoveryStorage.removeItem(storageKey); pending.value = null; editor.value = ''; if (value.csv) downloadCsv(value.fileName, value.csv); ElMessage.success('操作结果已返回'); await load() }
+  catch (e) { if (!disposed) { error.value = e.message || '结果待确认，请保留原请求重试'; if (canReleaseMallIntent(e)) { recoveryStorage.removeItem(storageKey); pending.value = null } } }
   finally { if (!disposed) busy.value = false }
 }
 async function importPreview() { if (blocked.value || !user.hasPermission('product:create', 'MALL')) return; busy.value = true; preview.value = null; error.value = ''; try { preview.value = await request.post(`${root}/import-preview`, { csv: csv.value }) } catch (e) { error.value = e.message } finally { busy.value = false } }
@@ -120,7 +122,7 @@ onMounted(load); onBeforeUnmount(() => { disposed = true; loadGeneration++; clos
 <template>
   <section class="growth-page" v-loading="loading">
     <header><div><p class="eyebrow">商城经营</p><h1>{{ title }}</h1><p class="muted">按门店管理，历史订单保留原规则。</p></div><el-button @click="refreshPage" :disabled="busy">刷新</el-button></header>
-    <el-alert v-if="error" :title="error" type="error" :closable="false" />
+    <el-alert v-if="recoveryError || error" :title="recoveryError || error" type="error" :closable="false" />
     <el-alert v-if="pending" title="有一项操作的结果待确认，请使用原请求继续核对。" type="warning" :closable="false"><el-button :loading="busy" :disabled="pending.damaged || !actionPermission(pending.path)" @click="recover">原请求重试</el-button></el-alert>
     <nav v-if="['members', 'coupons'].includes(tab)" class="mall-subnav"><RouterLink to="/mall/members">会员名单</RouterLink><RouterLink to="/mall/member-rules">会员规则与等级</RouterLink><RouterLink to="/mall/coupons">优惠券活动</RouterLink></nav>
     <template v-if="['members', 'member-rules', 'coupons'].includes(tab) && loaded">

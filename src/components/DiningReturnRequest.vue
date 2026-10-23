@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import request from '@/lib/request'
 import { useUserStore } from '@/stores/user'
@@ -6,13 +7,14 @@ import { ElMessage } from 'element-plus'
 const props = defineProps({ order: Object })
 const emit = defineEmits(['submitted', 'close'])
 const user = useUserStore(), kind = ref('RETURN'), reason = ref(''), items = ref([]), busy = ref(false), error = ref(''), pending = ref(null)
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
 const identity = computed(() => `${user.currentStoreId}:${user.userInfo?.id}`)
 const allowed = computed(() => user.hasPermission('refund:approve'))
 const key = () => `dining-return:${identity.value}`
 let generation = 0, disposed = false
 function restore() {
   try {
-    const saved = JSON.parse(localStorage.getItem(key()) || 'null')
+    const saved = JSON.parse(recoveryStorage.getItem(key()) || 'null')
     if (saved && (!saved.requestKey || !saved.orderId || !['RETURN', 'REFUND'].includes(saved.kind) || !Array.isArray(saved.items))) throw new Error('格式错误')
     pending.value = saved
   } catch { error.value = '售后恢复记录无法读取，请联系店长核对'; pending.value = { invalid: true } }
@@ -31,11 +33,11 @@ async function recover() {
     const result = await request.post('/dining/aftersales', body, { silent: true, timeout: 30000 })
     if (disposed || version !== generation) return
     if (Number(result.orderId) !== Number(body.orderId) || result.requestKey !== body.requestKey || result.kind !== body.kind) throw new Error('售后记录与原申请不符，请恢复原申请核对')
-    localStorage.removeItem(key()); pending.value = null; error.value = ''
+    recoveryStorage.removeItem(key()); pending.value = null; error.value = ''
     ElMessage.success('申请已登记，请到服务与售后审核，再执行退款'); emit('submitted')
   } catch (e) {
     if (disposed || version !== generation) return
-    if (e.definitive) { localStorage.removeItem(key()); pending.value = null }
+    if (canReleaseRecovery(e)) { recoveryStorage.removeItem(key()); pending.value = null }
     error.value = e.message || '申请结果未确认，请恢复原申请'
   } finally { if (!disposed && version === generation) busy.value = false }
 }
@@ -44,7 +46,7 @@ async function submit() {
   const selected = items.value.filter(item => item.selected && item.max > 0)
   if (!selected.length || selected.some(item => !Number.isInteger(item.qty) || item.qty < 1 || item.qty > item.max) || !reason.value.trim()) { error.value = '请选择可处理的商品数量，并填写原因'; return }
   const body = { orderId: props.order.id, requestKey: crypto.randomUUID(), kind: kind.value, reason: reason.value.trim(), items: selected.map(item => ({ id: item.id, qty: item.qty })) }
-  try { localStorage.setItem(key(), JSON.stringify(body)); pending.value = body }
+  try { recoveryStorage.setItem(key(), JSON.stringify(body)); pending.value = body }
   catch { error.value = '无法保存售后恢复记录，暂不能申请'; return }
   await recover()
 }

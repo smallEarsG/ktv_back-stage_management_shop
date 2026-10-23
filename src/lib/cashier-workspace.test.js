@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -20,7 +21,7 @@ function view(path, names, request, saved = storage()) {
   const source = fs.readFileSync(new URL(`../views/${path}`, import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), mounts = [], cleanups = []
-  const sandbox = {
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery,
     ...workspace, computed, reactive, ref, watch, dayjs, customParseFormat, cashierReceipt, recoveryKey, nextOrderStatus,
     localStorage: saved, sessionStorage: storage(), request,
     useUserStore: () => ({ currentStoreId: '1', userInfo: { id: 3 }, hasPermission: () => true }),

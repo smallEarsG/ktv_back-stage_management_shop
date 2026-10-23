@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -15,7 +16,7 @@ function requestRuntime() {
   return rejected
 }
 
-test('definite HTTP validation failures release the original dining intent; network uncertainty retains it', async () => {
+test('validation failures release dining intent; authentication, permissions and unknown results retain it', async () => {
   const normalize = requestRuntime()
   for (const status of [400, 401, 403, 409, 422, 500, undefined]) {
     const memory = new Map(), scope = effectScope()
@@ -23,16 +24,20 @@ test('definite HTTP validation failures release the original dining intent; netw
     if (status) error.response = { status, data: { message: '库存不足' } }
     let failure
     try { await normalize(error) } catch (e) { failure = e }
-    const sandbox = { ...helpers, ref, computed, reactive, watch, env: {}, useRoute: () => ({ meta: { diningTab: 'seats' } }), useUserStore: () => ({ currentStoreId: 1, userInfo: { id: 9 }, hasPermission: () => true }),
+    const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ...helpers, ref, computed, reactive, watch, env: {}, useRoute: () => ({ meta: { diningTab: 'seats' } }), useUserStore: () => ({ currentStoreId: 1, userInfo: { id: 9 }, hasPermission: () => true }),
       localStorage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) }, request: { post: async () => { throw failure } },
       ElMessage: { error() {}, warning() {}, success() {} }, ElMessageBox: {}, onMounted() {}, onBeforeUnmount() {}, clearInterval, console }
     vm.createContext(sandbox)
     scope.run(() => vm.runInContext(script('../views/dining/DiningConsole.vue') + '\napi = { retain, recover, pending };', sandbox))
     sandbox.api.retain({ kind: 'order', sessionId: 123, body: { clientOrderNo: 'same-original-key', items: [{ skuId: 1, qty: 99 }] } })
     await sandbox.api.recover()
-    const definite = [400, 401, 403, 409, 422].includes(status)
+    const definite = [400, 409, 422].includes(status)
     assert.equal(Boolean(sandbox.api.pending.value), !definite, 'HTTP ' + status)
     assert.equal(memory.has('dining-recovery:1:9'), !definite, 'persisted HTTP ' + status)
+    if (!definite) {
+      assert.equal(sandbox.api.pending.value.body.clientOrderNo, 'same-original-key')
+      assert.equal(JSON.parse(memory.get('dining-recovery:1:9')).body.clientOrderNo, 'same-original-key')
+    }
     scope.stop()
   }
 })

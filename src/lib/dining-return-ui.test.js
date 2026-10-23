@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -8,7 +9,7 @@ const source = fs.readFileSync(new URL('../components/DiningReturnRequest.vue', 
 function page(request) {
   const props = reactive({ order: { id: 34, items: [{ id: 7, name: '饮料', returnableQty: 2, refundableQty: 3 }] } })
   const user = reactive({ currentStoreId: 1, userInfo: { id: 9 }, hasPermission: () => true }), memory = new Map(), scope = effectScope()
-  const sandbox = { ref, computed, watch, request, defineProps: () => props, defineEmits: () => () => {}, useUserStore: () => user,
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ref, computed, watch, request, defineProps: () => props, defineEmits: () => () => {}, useUserStore: () => user,
     localStorage: { getItem: key => memory.get(key) || null, setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) },
     crypto: { randomUUID: () => 'return-original' }, ElMessage: { success() {} }, onBeforeUnmount: fn => { sandbox.unmount = fn } }
   vm.createContext(sandbox)

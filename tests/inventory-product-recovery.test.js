@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { test } from 'node:test'
 import { computed, reactive, ref, watch } from 'vue'
 import { inventorySummary, skuInventory } from '../src/lib/inventory.js'
+import { createRecoveryStorage, canReleaseRecovery } from '../src/lib/recovery-storage.js'
 
 const source = (name, environment) => fs.readFileSync(new URL(`../src/views/${name}`, import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replaceAll('import.meta.env.VITE_API_BASE_URL', JSON.stringify(environment?.apiBase || '/api'))
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
@@ -11,7 +12,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 function storage() { const map = new Map(); return { getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, value), removeItem: key => map.delete(key), map } }
 function page(name, request, extra = {}) {
   const stops = [], disposers = []
-  const context = { computed, reactive, ref, watch: (...args) => { const stop = watch(...args); stops.push(stop); return stop }, onMounted() {}, onBeforeUnmount: callback => disposers.push(callback),
+  const context = { computed, reactive, ref, createRecoveryStorage: (raw, actor) => createRecoveryStorage(raw, actor, { VITE_API_BASE_URL: extra.environment?.apiBase || '/api', BASE_URL: '/merchant/', VITE_STORAGE_PREFIX: extra.environment?.prefix || '' }), canReleaseRecovery, watch: (...args) => { const stop = watch(...args); stops.push(stop); return stop }, onMounted() {}, onBeforeUnmount: callback => disposers.push(callback),
     useUserStore: () => ({ hasPermission: () => true, currentStoreId: 5, userInfo: { id: 9 } }), useRoute: () => ({ query: {} }), useRouter: () => ({ push() {} }), request, inventorySummary, skuInventory,
     newRequestKey: () => `inventory-${++page.nextKey}`, localStorage: storage(), ElMessage: { success() {}, warning() {}, error() {} }, ElMessageBox: { confirm: async () => {} }, FormData: class { append() {} }, console: { error() {}, log() {} }, ...extra }
   const exports = name.startsWith('products')

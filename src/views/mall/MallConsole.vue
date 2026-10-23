@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage } from '@/lib/recovery-storage'
 import MallSkuEditor from '@/components/MallSkuEditor.vue'
 import { skuFields, skuPayload } from '@/lib/mall-product-editor'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -11,6 +12,7 @@ import { newRequestKey } from '@/lib/operations'
 import { mallText, mallMoney, mallDate, mallSpecs, mallProvinces, readMallPending, retainMallPending, clearMallPending, verifyMallResult, mallOperationPermission } from '@/lib/mall'
 
 const route = useRoute(), user = useUserStore()
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
 const tab = route.meta.mallTab || 'orders'
 const applicationId = user.product('MALL')?.application?.id
 const storeId = user.currentStoreId, userId = user.userInfo?.id
@@ -25,7 +27,7 @@ const busy = ref(false), pending = ref(null), recoveryError = ref(''), detail = 
 const aftersale = ref(null), aftersaleOpen = ref(false), aftersaleLoading = ref(false), aftersaleError = ref(''), aftersaleTarget = ref(null)
 const editor = ref(''), editorError = ref(''), editorUncertain = ref(false), form = reactive({})
 let generation = 0, detailGeneration = 0, aftersaleGeneration = 0, disposed = false
-try { pending.value = readMallPending(localStorage, storeId, applicationId, userId) } catch (e) { recoveryError.value = e.message }
+try { pending.value = readMallPending(recoveryStorage, storeId, applicationId, userId) } catch (e) { recoveryError.value = e.message }
 const blocked = computed(() => busy.value || !!pending.value || !!recoveryError.value)
 const titles = { products: '商城商品', orders: '商城订单', aftersales: '退款退货', settings: '商城设置', report: '商城报表' }
 const descriptions = { products: '商品单独定价与上下架；启用库存关联后，共享实物数量。', orders: '处理配送、自提和历史订单，订单金额以服务端记录为准。', aftersales: '按商品数量退款、退货与等价规格换货，收货、入库和退款分别留痕。', settings: '设置配送、自提和运费规则，修改不影响已生成订单。', report: '仅统计当前商城应用，点餐收入不在此处。' }
@@ -118,7 +120,7 @@ function operation(path, body, label, targetId) {
 }
 async function perform(value) {
   if (busy.value || recoveryError.value || !user.hasPermission(mallOperationPermission(value.path))) return
-  try { pending.value = retainMallPending(localStorage, storeId, applicationId, userId, value) }
+  try { pending.value = retainMallPending(recoveryStorage, storeId, applicationId, userId, value) }
   catch (e) { recoveryError.value = e.message; return }
   await recover()
 }
@@ -130,13 +132,13 @@ async function recover() {
   try {
     const result = await request.post(`${root}${value.path}`, JSON.parse(JSON.stringify(value.body)), { silent: true })
     if (!verifyMallResult(value, result)) throw new Error('返回结果未能确认原操作，请保留原请求号并核对')
-    clearMallPending(localStorage, storeId, applicationId, userId); pending.value = null
+    clearMallPending(recoveryStorage, storeId, applicationId, userId); pending.value = null
     editor.value = ''; ElMessage.success(value.path.endsWith('/refund-retry') ? '已重试原退款，实际退款结果请查询核对' : `${value.label}已完成`)
     await load()
     if (detailOpen.value && detail.value) await inspect({ id: detail.value.id })
     if (aftersaleOpen.value && aftersale.value) await inspectAftersale(aftersale.value)
   } catch (e) {
-    if (canReleaseMallIntent(e)) { clearMallPending(localStorage, storeId, applicationId, userId); pending.value = null }
+    if (canReleaseMallIntent(e)) { clearMallPending(recoveryStorage, storeId, applicationId, userId); pending.value = null }
     error.value = e.definitive ? e.message : `${e.message || '连接中断'}。结果未确认，请查询原订单或使用原请求重试。`
   } finally { busy.value = false }
 }

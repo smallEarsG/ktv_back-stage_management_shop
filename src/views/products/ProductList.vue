@@ -5,6 +5,8 @@ import { ElMessageBox, ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { inventorySummary } from '@/lib/inventory'
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
+import { newRequestKey } from '@/lib/operations'
 import request from '@/lib/request'
 import DiningProductRules from '@/components/DiningProductRules.vue'
 const diningRuleVisible = ref(false), diningRuleProduct = ref(null)
@@ -27,8 +29,14 @@ let editorGeneration = 0, uploadGeneration = 0
 watch(showEditDialog, open => {
   if (!open) { editorGeneration++; uploadGeneration++; imageUploading.value = false }
 }, { flush: 'sync' })
-onBeforeUnmount(() => { editorGeneration++; uploadGeneration++ })
+let categoryDisposed = false
+onBeforeUnmount(() => { editorGeneration++; uploadGeneration++; categoryDisposed = true })
 const showCategoryDialog = ref(false)
+const categorySaving = ref(false), categoryChecking = ref(false), categorySaveUncertain = ref(false), categorySaveError = ref(''), categoryPending = ref(null)
+const categoryOwner = `${userStore.currentStoreId}:${userStore.userInfo?.id}`
+const categoryStorageKey = `category-create:${categoryOwner}`
+const categoryStorage = createRecoveryStorage(localStorage, userStore.userInfo?.id)
+const categoryCurrent = () => !categoryDisposed && categoryOwner === `${userStore.currentStoreId}:${userStore.userInfo?.id}`
 const showEditCategoryDialog = ref(false)
 const categories = ref([])
 const products = ref([])
@@ -93,6 +101,51 @@ const addCategoryForm = reactive({
   sort: 0,
   active: true
 })
+function restoreCategoryPending() {
+  try {
+    const raw = categoryStorage.getItem(categoryStorageKey)
+    const saved = raw == null ? null : JSON.parse(raw)
+    if (saved !== null && (!saved || saved.version !== 1 || !saved.id || typeof saved.body?.name !== 'string' || !saved.body.name.trim() || !Number.isFinite(saved.body.sort) || typeof saved.body.active !== 'boolean')) throw new Error('分类恢复记录格式无效')
+    categoryPending.value = saved; categorySaveUncertain.value = !!saved
+    if (saved) {
+      Object.assign(addCategoryForm, saved.body)
+      categorySaveError.value = '原分类“' + saved.body.name + '”新增结果待核对。请刷新核对原分类；未查到之前不会再次提交。'
+    }
+  } catch (error) {
+    categoryPending.value = { invalid: true }; categorySaveUncertain.value = true
+    categorySaveError.value = error.code === 'RECOVERY_LEGACY' ? error.message : '分类恢复记录无法读取或已损坏，原记录已保留。请联系店长核对，暂不能新增分类。'
+  }
+}
+restoreCategoryPending()
+
+function completeCategoryList(response) {
+  const list = response?.list ?? response?.data?.list
+  const total = response?.total ?? response?.data?.total
+  if (!Array.isArray(list) || list.some(row => !row || !/^[1-9]\d*$/.test(String(row.id)) || typeof row.name !== 'string') || (total != null && (!Number.isSafeInteger(Number(total)) || Number(total) !== list.length)) || response?.hasNext === true || response?.data?.hasNext === true) throw new Error('未取得完整分类列表，请稍后重新核对')
+  return list
+}
+function clearCategoryPending(operation) {
+  if (categoryStorage.getItem(categoryStorageKey) !== JSON.stringify(operation)) throw new Error('原分类恢复记录已变化，请重新进入页面核对')
+  categoryStorage.removeItem(categoryStorageKey)
+  categoryPending.value = null; categorySaveUncertain.value = false
+}
+async function reconcileCategory() {
+  if (!categoryCurrent() || categorySaving.value || categoryChecking.value || !categoryPending.value || categoryPending.value.invalid) return
+  const operation = JSON.parse(JSON.stringify(categoryPending.value))
+  categoryChecking.value = true
+  try {
+    const list = completeCategoryList(await request.get('/categories', { silent: true }))
+    if (!categoryCurrent()) return
+    categories.value = list.slice().sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    const matches = list.filter(row => row.name.trim() === operation.body.name)
+    if (!matches.length) { categorySaveError.value = '完整分类列表暂未看到原分类“' + operation.body.name + '”。结果仍待核对，请稍后再刷新；不会再次提交。'; return }
+    clearCategoryPending(operation)
+    categorySaveError.value = '已在分类列表找到“' + operation.body.name + '”' + (matches.length > 1 ? '（存在同名记录）' : '') + '，请编辑已有分类，不要重复新增。'
+    addCategoryForm.name = ''
+  } catch (error) {
+    if (categoryCurrent()) categorySaveError.value = (error.message || '分类列表核对失败') + '；原新增记录已保留，不会再次提交。'
+  } finally { categoryChecking.value = false }
+}
 
 const addSpec = () => {
   productForm.specs.push({ name: '', values: [], tempValue: '' })
@@ -492,23 +545,49 @@ const saveProduct = async () => {
 }
 
 const handleAddCategory = async () => {
-  if (!(canCreate.value || canEdit.value)) return
+  if (!(canCreate.value || canEdit.value) || !categoryCurrent() || categorySaving.value || categoryChecking.value || categorySaveUncertain.value) return
+  restoreCategoryPending()
+  if (categorySaveUncertain.value) return
   if (!addCategoryForm.name.trim()) {
     ElMessage.warning('请输入分类名称')
     return
   }
+  categorySaving.value = true; categorySaveError.value = ''
+  let operation
   try {
-    await request.post('/categories', { name: addCategoryForm.name.trim(), sort: addCategoryForm.sort, active: addCategoryForm.active })
+    const body = { name: addCategoryForm.name.trim(), sort: Number.isFinite(addCategoryForm.sort) ? addCategoryForm.sort : 0, active: addCategoryForm.active !== false }
+    const list = completeCategoryList(await request.get('/categories', { silent: true }))
+    if (!categoryCurrent()) return
+    if (list.some(row => row.name.trim() === body.name)) { categorySaveError.value = '分类“' + body.name + '”已存在，请编辑已有分类，不要重复新增。'; return }
+    restoreCategoryPending()
+    if (categorySaveUncertain.value) return
+    operation = { version: 1, id: newRequestKey(), body }
+    try { categoryStorage.setItem(categoryStorageKey, JSON.stringify(operation)) }
+    catch { categorySaveError.value = '无法保存原分类恢复记录，暂不能新增，请检查浏览器存储后重试。'; return }
+    categoryPending.value = operation; categorySaveUncertain.value = true
+    await request.post('/categories', body)
+    if (!categoryCurrent()) return
+    clearCategoryPending(operation)
     ElMessage.success('分类添加成功')
     showCategoryDialog.value = false
     fetchCategories()
   } catch (e) {
+    if (!categoryCurrent()) return
+    categorySaveError.value = e.message || '分类未能保存，请重试'
+    if (operation) {
+      if (canReleaseRecovery(e)) {
+        try { clearCategoryPending(operation) } catch { restoreCategoryPending() }
+      } else categorySaveError.value = '原分类“' + operation.body.name + '”新增结果尚未确认。请刷新核对原分类；记录已保留，不会再次提交。'
+    }
     console.error(e)
-  }
+  } finally { categorySaving.value = false }
 }
 
 const handleOpenAddCategory = () => {
-  if (!(canCreate.value || canEdit.value)) return
+  if (!(canCreate.value || canEdit.value) || !categoryCurrent() || categorySaving.value || categoryChecking.value) return
+  restoreCategoryPending()
+  if (categorySaveUncertain.value) { showCategoryDialog.value = true; return }
+  categorySaveError.value = ''
   addCategoryForm.name = ''
   addCategoryForm.sort = 0
   addCategoryForm.active = true
@@ -1066,8 +1145,10 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showCategoryDialog" title="新增分类" width="380px">
-      <el-form :model="addCategoryForm" label-width="80px">
+    <el-dialog v-model="showCategoryDialog" title="新增分类" width="380px" :close-on-click-modal="!categorySaving && !categoryChecking" :close-on-press-escape="!categorySaving && !categoryChecking" :show-close="!categorySaving && !categoryChecking">
+      <el-alert v-if="categorySaveError" :title="categorySaveError" type="error" :closable="false" class="mb-4" />
+      <p v-if="categoryPending && !categoryPending.invalid" class="mb-4">待核对分类：{{ categoryPending.body.name }} · 排序 {{ categoryPending.body.sort }} · {{ categoryPending.body.active ? '启用' : '停用' }}</p>
+      <el-form :model="addCategoryForm" label-width="80px" :disabled="categorySaving || categoryChecking || categorySaveUncertain">
         <el-form-item label="名称">
           <el-input v-model="addCategoryForm.name" placeholder="请输入分类名称" @keyup.enter="handleAddCategory" />
         </el-form-item>
@@ -1077,11 +1158,12 @@ onMounted(() => {
         <el-form-item label="启用">
           <el-switch v-model="addCategoryForm.active" />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleAddCategory">保存</el-button>
-          <el-button @click="showCategoryDialog = false">取消</el-button>
-        </el-form-item>
       </el-form>
+      <template #footer>
+        <el-button v-if="categoryPending && !categoryPending.invalid" :loading="categoryChecking" :disabled="categorySaving" @click="reconcileCategory">刷新核对原分类</el-button>
+        <el-button type="primary" :loading="categorySaving" :disabled="categorySaveUncertain || categoryChecking" @click="handleAddCategory">保存</el-button>
+        <el-button :disabled="categorySaving || categoryChecking" @click="showCategoryDialog = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="showEditCategoryDialog" title="编辑分类" width="380px">

@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from '../src/lib/recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -10,7 +11,7 @@ function growthPage(tab, allowed = [], pending = null) {
   const calls = [], storage = new Map(), grants = new Set(allowed)
   if (pending) storage.set('mall-growth:1:7:9', JSON.stringify(pending))
   const user = { currentStoreId: 1, userInfo: { id: 9 }, product: () => ({ application: { id: 7 } }), hasPermission: (action, business = 'MALL') => business === 'MALL' && grants.has(action) }
-  const sandbox = { ...mall, ...growth, computed, reactive, ref, useRoute: () => ({ meta: { mallGrowth: tab }, query: {} }), useUserStore: () => user,
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ...mall, ...growth, computed, reactive, ref, useRoute: () => ({ meta: { mallGrowth: tab }, query: {} }), useUserStore: () => user,
     request: { get: async () => ({}), put: async (...args) => calls.push(args), post: async (...args) => { calls.push(args); return { list: [] } } },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     newRequestKey: () => 'new-intent', onMounted() {}, onBeforeUnmount() {}, ElMessage: { success() {} }, ElMessageBox: { confirm: async () => {} }, console }

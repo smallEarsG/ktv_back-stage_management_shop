@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import fs from 'node:fs'
@@ -11,7 +12,7 @@ function view(request, operationTab = 'members', suppliedUser = null) {
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope(), cleanup = [], storage = new Map()
   const route = reactive({ meta: { operationTab }, query: {} }), navigations = []
-  const sandbox = { ...helpers, ...birthdayHelpers, money: helpers.amountText, ref, reactive, computed, watch, request,
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ...helpers, ...birthdayHelpers, money: helpers.amountText, ref, reactive, computed, watch, request,
     setInterval: () => 1, clearInterval: () => {}, onMounted: () => {}, onBeforeUnmount: fn => cleanup.push(fn),
     useRoute: () => route, useRouter: () => ({ push: value => navigations.push(value) }), useUserStore: () => suppliedUser || ({ currentStoreId: 2, userInfo: { role: 'admin' } }),
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },

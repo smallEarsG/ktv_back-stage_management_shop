@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '@/lib/request'
@@ -7,18 +8,20 @@ import { money } from '@/lib/dining'
 const props = defineProps({ sessionId: [Number, String] })
 const emit = defineEmits(['settled'])
 const user = useUserStore(), bill = ref(null), loading = ref(false), busy = ref(false), error = ref('')
-const cash = ref(null), confirmed = ref(false), pending = ref(null)
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
+const cash = ref(null), confirmed = ref(false), pending = ref(null), recoveryError = ref('')
 const identity = computed(() => `${user.currentStoreId}:${user.userInfo?.id}`)
 const storageKey = () => `room-billing:${identity.value}`
 const canSettle = computed(() => user.hasPermission('pos:view'))
 const ready = computed(() => canSettle.value && !pending.value && !busy.value && bill.value && !bill.value.settled && confirmed.value && cash.value !== null && Number(cash.value) >= Number(bill.value.amountDue))
 let generation = 0, reading = 0, disposed = false
 function restore() {
+  recoveryError.value = ''
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey()) || 'null')
+    const saved = JSON.parse(recoveryStorage.getItem(storageKey()) || 'null')
     if (saved && (!/^[1-9]\d*$/.test(String(saved.sessionId)) || !saved.body?.requestKey || !Number.isFinite(Number(saved.body.expectedAmount)) || !Number.isFinite(Number(saved.body.cashReceived)))) throw new Error('恢复记录格式无效')
     pending.value = saved
-  } catch { error.value = '包厢收款恢复记录无法读取，请联系店长核对后处理'; pending.value = { invalid: true } }
+  } catch (e) { recoveryError.value = e.code === 'RECOVERY_LEGACY' ? e.message : '包厢收款恢复记录无法读取，请联系店长核对后处理；原记录已保留。'; pending.value = { invalid: true } }
 }
 async function load() {
   const sid = props.sessionId, version = generation, current = ++reading
@@ -41,19 +44,19 @@ async function recover() {
     const receipt = await request.post(`/dining/sessions/${operation.sessionId}/room-settle`, operation.body, { silent: true, timeout: 30000 })
     if (disposed || version !== generation) return
     if (Number(receipt.sessionId) !== Number(operation.sessionId) || receipt.requestKey !== operation.body.requestKey || !receipt.settled) throw new Error('收据与原收款不符，请恢复原操作核对')
-    localStorage.removeItem(storageKey()); pending.value = null; error.value = ''; confirmed.value = false
+    recoveryStorage.removeItem(storageKey()); pending.value = null; error.value = ''; confirmed.value = false
     if (Number(props.sessionId) === Number(operation.sessionId)) bill.value = receipt
     ElMessage.success(`包厢已结账，找零 ¥${money(receipt.change)}`); emit('settled')
   } catch (e) {
     if (disposed || version !== generation) return
-    if (e.definitive) { localStorage.removeItem(storageKey()); pending.value = null; await load() }
+    if (canReleaseRecovery(e)) { recoveryStorage.removeItem(storageKey()); pending.value = null; await load() }
     error.value = e.message || '收款结果未确认，请恢复原收款'
   } finally { if (!disposed && version === generation) busy.value = false }
 }
 async function settle() {
   if (!ready.value) return
   const operation = { sessionId: props.sessionId, body: { requestKey: crypto.randomUUID(), revision: bill.value.revision, expectedAmount: money(bill.value.amountDue), cashReceived: money(cash.value) } }
-  try { localStorage.setItem(storageKey(), JSON.stringify(operation)); pending.value = operation }
+  try { recoveryStorage.setItem(storageKey(), JSON.stringify(operation)); pending.value = operation }
   catch { error.value = '无法保存收款恢复记录，暂不能收款'; return }
   await recover()
 }
@@ -65,7 +68,7 @@ onBeforeUnmount(() => { disposed = true; generation++; reading++ })
 <template>
   <section class="room-bill">
     <div class="title-row"><h3>普通包厢计时账单</h3><el-button :loading="loading" :disabled="busy" @click="load">刷新计时账单</el-button></div>
-    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <el-alert v-if="recoveryError || error" :title="recoveryError || error" type="error" :closable="false" show-icon />
     <el-alert v-if="pending" type="warning" :closable="false" title="有一笔包厢收款结果待确认，请先恢复原收款。"><p v-if="!pending.invalid">原场次 #{{ pending.sessionId }}，按原金额与请求号查询。</p><el-button v-if="!pending.invalid && canSettle" :loading="busy" @click="recover">恢复原收款</el-button></el-alert>
     <template v-if="bill">
       <p>{{ bill.name }} · ¥{{ money(bill.unitPrice) }} / {{ bill.periodMinutes }}分钟</p>

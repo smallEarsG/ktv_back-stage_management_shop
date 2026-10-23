@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from '../src/lib/recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -10,7 +11,7 @@ function memberPage() {
   let dispose
   const source = fs.readFileSync(new URL('../src/views/mall/MallGrowth.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-  const sandbox = { computed, reactive, ref, request: { get(url) { const task = deferred(); requests.push({ url, ...task }); return task.promise } },
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, computed, reactive, ref, request: { get(url) { const task = deferred(); requests.push({ url, ...task }); return task.promise } },
     useRoute: () => ({ meta: { mallGrowth: 'members' }, query: {} }),
     useUserStore: () => ({ product: () => ({ application: { id: 8 } }), hasPermission: () => true, currentStoreId: 1, userInfo: { id: 1 } }),
     localStorage: { getItem: () => null }, onMounted() {}, onBeforeUnmount: callback => { dispose = callback }, console }

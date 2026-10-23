@@ -1,3 +1,4 @@
+import { canReleaseRecovery } from './recovery-storage.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -8,7 +9,7 @@ const extract = name => fs.readFileSync(new URL(`../components/${name}.vue`, imp
 const flush = () => new Promise(resolve => setImmediate(resolve))
 function paymentPage(request, memory = new Map()) {
   const props = reactive({ sessionId: 12 }), user = reactive({ currentStoreId: 1, userInfo: { id: 9 }, hasPermission: () => true }), scope = effectScope()
-  const sandbox = { ref, computed, watch, money, request, defineProps: () => props, defineEmits: () => () => {}, useUserStore: () => user,
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ref, computed, watch, money, request, defineProps: () => props, defineEmits: () => () => {}, useUserStore: () => user,
     localStorage: { getItem: key => memory.get(key) || null, setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) },
     crypto: { randomUUID: () => 'immutable-request' }, ElMessage: { success() {} }, onBeforeUnmount: fn => { sandbox.unmount = fn } }
   vm.createContext(sandbox)
@@ -64,7 +65,7 @@ test('unreadable recovery storage prevents a new cash receipt', async () => {
 
 test('failed billing configuration read cannot submit an empty replacement', async () => {
   let writes = 0
-  const sandbox = { ref, computed, defineProps: () => ({ canEdit: true }), request: { get: async () => { throw new Error('网络中断') }, put: async () => { writes++ } }, ElMessage: {}, onMounted() {}, onBeforeUnmount() {} }
+  const sandbox = { createRecoveryStorage: raw => raw, canReleaseRecovery, ref, computed, defineProps: () => ({ canEdit: true }), request: { get: async () => { throw new Error('网络中断') }, put: async () => { writes++ } }, ElMessage: {}, onMounted() {}, onBeforeUnmount() {} }
   vm.createContext(sandbox)
   vm.runInContext(extract('RoomBillingSettings') + '\napi = { load, save, error };', sandbox)
   await sandbox.api.load(); await sandbox.api.save()

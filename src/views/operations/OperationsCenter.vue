@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -14,6 +15,7 @@ import MemberMobileCard from '@/components/MemberMobileCard.vue'
 import { birthdayCountdown, birthdayScopes, birthdayText } from '@/lib/birthdays'
 
 const route = useRoute(), router = useRouter(), user = useUserStore()
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
 const tab = computed(() => route.meta.operationTab || 'overview')
 const admin = computed(() => user.userInfo?.role === 'admin')
 const canEdit = computed(() => admin.value || user.hasPermission('operations:edit', 'DINING'))
@@ -27,7 +29,7 @@ const pending = ref(null), recoveryError = ref('')
 const memberQuery = ref('')
 const birthdayScope = ref(birthdayScopes.some(scope => scope.value === route.query?.birthday) ? route.query.birthday : '')
 const birthdayRevision = ref(0), birthdayInvalid = ref(false), birthdayEditorKey = ref(0)
-try { pending.value = readOperation(localStorage, user.currentStoreId) } catch (e) { recoveryError.value = e.message }
+try { pending.value = readOperation(recoveryStorage, user.currentStoreId) } catch (e) { recoveryError.value = e.message }
 const selected = ref(null), detailOpen = ref(false), detail = ref(null), detailTab = ref('wallet')
 const kind = ref(''), dialogOpen = ref(false), form = reactive({}), memberOptions = ref([])
 const walletTab = ref('plans'), couponTab = ref('templates')
@@ -103,9 +105,9 @@ async function open(type, row = null, target = null) {
 }
 async function submitFinancial(url, body) {
   if (!canWrite(url.endsWith('/recharge') ? 'recharge' : 'adjust')) throw new Error('当前账号无权执行原资金操作，请联系店长核对')
-  const intent = retainOperation(localStorage, user.currentStoreId, url, body); pending.value = intent
-  try { await request.post(intent.url, intent.body); clearOperation(localStorage, user.currentStoreId); pending.value = null }
-  catch (e) { if (e.definitive || [400, 401, 403, 409, 422].includes(e.response?.status)) { clearOperation(localStorage, user.currentStoreId); pending.value = null } throw e }
+  const intent = retainOperation(recoveryStorage, user.currentStoreId, url, body); pending.value = intent
+  try { await request.post(intent.url, intent.body); clearOperation(recoveryStorage, user.currentStoreId); pending.value = null }
+  catch (e) { if (canReleaseRecovery(e)) { clearOperation(recoveryStorage, user.currentStoreId); pending.value = null } throw e }
 }
 async function recover() { if (saving.value || !pending.value) return; saving.value = true; try { await submitFinancial(pending.value.url, pending.value.body); ElMessage.success('原操作已确认'); await load(); if (selected.value) await inspect(selected.value) } catch (e) { ElMessage.error(e.response?.data?.message || '结果暂未确认，请继续重试原操作') } finally { saving.value = false } }
 async function save() {

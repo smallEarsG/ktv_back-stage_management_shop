@@ -1,4 +1,5 @@
 <script setup>
+import { createRecoveryStorage, canReleaseRecovery } from '@/lib/recovery-storage'
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -11,6 +12,7 @@ import ReceiptPreview from '@/components/ReceiptPreview.vue'
 import { sceneNames, sessionNames, fulfillmentNames, lineNames, serviceNames, nextLineState, money, attrsText, requestKey, scenePreset } from '@/lib/dining'
 
 const route = useRoute(), user = useUserStore()
+const recoveryStorage = createRecoveryStorage(localStorage, user.userInfo?.id)
 const tab = computed(() => route.meta.diningTab || 'seats')
 const titles = { seats: '台位营业', kitchen: '后厨出餐', services: '服务与售后', prints: '出餐小票', shifts: '收银交班', settings: '点餐场景' }
 const descriptions = { seats: '开台、加菜、结账和清台，集中处理本次消费', kitchen: '按制作区域查看菜品，出餐后交给服务员送达', services: '及时回应顾客呼叫，审核取消与退款申请', prints: '查看分单小票，打印后确认结果，失败时可重新打印', shifts: '核对本班收款、退款和实点现金，完成交接', settings: '按门店经营方式设置点餐、付款和营业时间' }
@@ -66,8 +68,12 @@ const selectedDue = computed(() => orders.value.filter(o => selectedOrders.value
 const unpaid = computed(() => orders.value.filter(o => o.status !== 90 && o.payStatus !== 2))
 const cashReady = computed(() => cashConfirmed.value && selectedOrders.value.length && Number(tender.value) >= selectedDue.value)
 const recoveryStorageKey = () => `dining-recovery:${user.currentStoreId}:${user.userInfo?.id}`
-const pending = ref(null)
-try { pending.value = JSON.parse(localStorage.getItem(recoveryStorageKey()) || 'null') } catch { error.value = '交易恢复记录无法读取，请联系店长核对' }
+const pending = ref(null), recoveryError = ref('')
+try {
+  const saved = JSON.parse(recoveryStorage.getItem(recoveryStorageKey()) || 'null')
+  if (saved && (!['settle', 'order'].includes(saved.kind) || !/^[1-9]\d*$/.test(String(saved.sessionId)) || !saved.body || !(saved.kind === 'settle' ? saved.body.requestKey : saved.body.clientOrderNo))) throw new Error('恢复记录格式无效')
+  pending.value = saved
+} catch (e) { pending.value = { invalid: true }; recoveryError.value = e.code === 'RECOVERY_LEGACY' ? e.message : '交易恢复记录无法读取，请联系店长核对；原记录已保留，暂不能开新单或收款。' }
 async function inspect(seat) { currentSession.value = { id: seat.sessionId, roomId: seat.roomNumber }; receipts.value = []; receiptError.value = ''; billVisible.value = true; selectedOrders.value = []; tender.value = undefined; cashConfirmed.value = false; await loadBill() }
 async function loadBill() {
   const sid = currentSession.value?.id, version = ++billGeneration
@@ -89,8 +95,8 @@ async function seatAction(action) {
   await act(() => request.post(`/dining/sessions/${currentSession.value.id}/action`, { action, ...(action === 'transfer' ? { roomId: targetRoom.value } : {}) }))
   transferVisible.value = false
 }
-function retain(operation) { localStorage.setItem(recoveryStorageKey(), JSON.stringify(operation)); pending.value = operation }
-function clearRecovery() { localStorage.removeItem(recoveryStorageKey()); pending.value = null }
+function retain(operation) { if (pending.value || recoveryError.value) throw new Error('请先核对原交易'); recoveryStorage.setItem(recoveryStorageKey(), JSON.stringify(operation)); pending.value = operation }
+function clearRecovery() { recoveryStorage.removeItem(recoveryStorageKey()); pending.value = null }
 async function collectCash() {
   if (!can('pos:view')) return
   if (!cashReady.value || pending.value) return
@@ -100,7 +106,7 @@ async function collectCash() {
 }
 async function recover() {
   if (!can('pos:view')) { ElMessage.warning('当前账号无权恢复原收银交易，请联系店长'); return }
-  if (!pending.value || busy.value) return
+  if (!pending.value || pending.value.invalid || recoveryError.value || busy.value) return
   const operation = pending.value
   busy.value = true
   try {
@@ -108,7 +114,7 @@ async function recover() {
     clearRecovery(); orderVisible.value = false; selectedOrders.value = []; cashConfirmed.value = false
     ElMessage.success(operation.kind === 'settle' ? `收款已登记，找零 ¥${money(result.change ?? Number(result.tender) - Number(result.amount))}` : '订单已提交，请到后厨查看出餐进度')
     await load(true); if (billVisible.value) await loadBill()
-  } catch (e) { if (e.definitive) clearRecovery(); ElMessage.error(e.message || '结果尚未确认，请重试原交易') }
+  } catch (e) { if (canReleaseRecovery(e)) clearRecovery(); ElMessage.error(e.message || '结果尚未确认，请重试原交易') }
   finally { busy.value = false }
 }
 watch([selectedDue, tender], () => { cashConfirmed.value = false })
@@ -170,7 +176,8 @@ onBeforeUnmount(() => { disposed = true; generation++; billGeneration++; clearIn
     <ReceiptPreview :payload="previewPayload" :paper-width="paperWidth" @close="previewPayload = null" />
     <header class="dining-heading"><div><span class="eyebrow">门店营业</span><h1>{{ titles[tab] }}</h1><p>{{ descriptions[tab] }}</p></div><div class="heading-actions"><span v-if="lastUpdated" class="sync-time">{{ lastUpdated }} 更新</span><el-button :loading="loading" @click="load()">刷新</el-button></div></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="notice" />
-    <el-alert v-if="pending" title="有一笔交易结果待确认。请恢复原交易，再提交新的订单或收款。" type="warning" :closable="false" class="notice"><el-button :loading="busy" @click="recover">确认原交易结果</el-button></el-alert>
+    <el-alert v-if="recoveryError" :title="recoveryError" type="error" :closable="false" show-icon class="notice" />
+    <el-alert v-if="pending && !pending.invalid" title="有一笔交易结果待确认。请恢复原交易，再提交新的订单或收款。" type="warning" :closable="false" class="notice"><el-button :loading="busy" @click="recover">确认原交易结果</el-button></el-alert>
     <template v-if="tab === 'seats'">
       <div class="metric-row"><article><span>空闲台位</span><strong>{{ counts.free }}</strong></article><article><span>正在消费</span><strong>{{ counts.active }}</strong></article><article><span>等待清台</span><strong>{{ counts.cleaning }}</strong></article></div>
       <div class="toolbar"><el-input v-model="keyword" placeholder="搜索桌号或包厢号" clearable /><span>点击台位查看本次消费</span></div>
