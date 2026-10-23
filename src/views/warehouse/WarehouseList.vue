@@ -4,6 +4,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { Search, Right, ArrowDown, Refresh, Plus } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { inventorySummary, skuInventory } from '@/lib/inventory'
+import { newRequestKey } from '@/lib/operations'
+import { authStorage } from '@/lib/auth-storage'
 import request from '@/lib/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -18,6 +20,14 @@ const stockItems = ref([])
 const inventoryError = ref('')
 const loading = ref(false)
 const submitting = ref(false)
+const pendingStock = ref(null), recoveryError = ref(''), stockResultError = ref('')
+const stockRecoveryKey = `warehouse-recovery:${encodeURIComponent(import.meta.env.VITE_API_BASE_URL || '/api')}:${userStore.currentStoreId}:${userStore.userInfo?.id}`
+try {
+  const saved = JSON.parse(authStorage.getItem(stockRecoveryKey) || 'null')
+  if (saved !== null && (!['/warehouse/inbound', '/warehouse/outbound'].includes(saved.endpoint) || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(saved.body?.requestKey || '') || !/^[1-9]\d*$/.test(String(saved.body?.productId || '')) || (saved.body?.skuId != null && !/^[1-9]\d*$/.test(String(saved.body.skuId))) || !Number.isInteger(saved.body?.quantity) || saved.body.quantity < 1 || typeof saved.body?.reason !== 'string')) throw new Error('恢复记录格式无效')
+  pendingStock.value = saved
+} catch { recoveryError.value = '原库存操作恢复记录无法读取，请联系店长核对库存与流水后处理' }
+const stockBlocked = computed(() => submitting.value || !!pendingStock.value || !!recoveryError.value)
 const inventoryPage = ref(1)
 const inventoryTotal = ref(0)
 const productChoices = ref([])
@@ -275,6 +285,7 @@ const searchProducts = async (keyword = '') => {
 
 const handleAction = async (type, row = null, skuId = null) => {
   if (!canAdjust.value) return
+  if (stockBlocked.value) { ElMessage.warning('请先恢复原库存操作，再进行新的入库、出库或盘点'); return }
   ++productDetailSequence
   detailLoading.value = false
   detailError.value = ''
@@ -350,9 +361,29 @@ const handleSelectProduct = async (id) => {
     skuOptions.value = []
   }
 }
+const recoverStock = async () => {
+  if (!canAdjust.value || submitting.value || !pendingStock.value || recoveryError.value) return
+  const operation = pendingStock.value
+  submitting.value = true; stockResultError.value = ''
+  try {
+    await request.post(operation.endpoint, JSON.parse(JSON.stringify(operation.body)), { silent: true })
+    authStorage.removeItem(stockRecoveryKey); pendingStock.value = null
+    showDialog.value = false
+    ElMessage.success(operation.endpoint.endsWith('/inbound') ? '原入库已确认，库存只登记一次' : '原出库已确认，库存只登记一次')
+    await fetchInventory()
+  } catch (e) {
+    const code = Number(e.response?.status ?? e.code)
+    if ([400, 409, 422].includes(code)) {
+      try { authStorage.removeItem(stockRecoveryKey); pendingStock.value = null }
+      catch { recoveryError.value = '原库存操作记录暂无法清除，请恢复存储后刷新核对' }
+      showDialog.value = false; await fetchInventory()
+    }
+    stockResultError.value = `${e.message || '连接中断'}${pendingStock.value ? '。结果未确认，请恢复原操作；系统会沿用原请求号，避免重复记库存。' : '。本次未新增库存变动，请重新核对后操作。'}`
+  } finally { submitting.value = false }
+}
 const submitAction = async () => {
   if (!canAdjust.value) return
-  if (submitting.value) return
+  if (stockBlocked.value) return
   if (!canSubmit.value) {
     ElMessage.error('请选择规格、填写有效数量，并填写出库或盘点原因'); return
   }
@@ -387,6 +418,14 @@ const submitAction = async () => {
     }
     if ((selectedProduct.value?.skus || []).length > 1 && !form.skuId) {
       ElMessage.error('多规格商品请选择规格')
+      return
+    }
+    if (['inbound', 'outbound'].includes(dialogType.value)) {
+      const operation = { endpoint, body: { ...payload, requestKey: newRequestKey() } }
+      try { authStorage.setItem(stockRecoveryKey, JSON.stringify(operation)); pendingStock.value = operation }
+      catch { recoveryError.value = '无法保存库存操作恢复记录，尚未提交。请恢复浏览器存储后刷新重试'; return }
+      submitting.value = false
+      await recoverStock()
       return
     }
     await request.post(endpoint, payload)
@@ -425,9 +464,16 @@ watch(() => route.query, openShortcut)
       </div>
       <div class="heading-actions">
         <el-button :icon="Refresh" :loading="loading" @click="fetchInventory">刷新</el-button>
-        <el-button v-if="canAdjust" type="primary" :icon="Plus" @click="handleAction('inbound')">商品入库</el-button>
+        <el-button v-if="canAdjust" type="primary" :icon="Plus" :disabled="stockBlocked" @click="handleAction('inbound')">商品入库</el-button>
       </div>
     </div>
+
+    <el-alert v-if="recoveryError" :title="recoveryError" type="error" :closable="false" show-icon class="resource-alert" />
+    <el-alert v-if="stockResultError" :title="stockResultError" type="warning" :closable="false" show-icon class="resource-alert" />
+    <el-alert v-if="pendingStock" title="有一笔库存操作结果待确认，请先恢复原操作" type="warning" :closable="false" show-icon class="resource-alert">
+      <p>{{ pendingStock.endpoint.endsWith('/inbound') ? '入库' : '出库' }} {{ pendingStock.body.quantity }} 件。恢复只核对原操作，不会重复记库存。</p>
+      <el-button v-if="canAdjust" :loading="submitting" :disabled="!!recoveryError" @click="recoverStock">恢复原{{ pendingStock.endpoint.endsWith('/inbound') ? '入库' : '出库' }}</el-button>
+    </el-alert>
 
     <el-card class="inventory-card" shadow="never">
       <div class="inventory-toolbar">
@@ -542,10 +588,12 @@ watch(() => route.query, openShortcut)
     </el-card>
 
     <el-dialog v-model="showDialog" :title="dialogTitle" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting" class="inventory-action-dialog">
+      <el-alert v-if="recoveryError || stockResultError" :title="recoveryError || stockResultError" type="warning" :closable="false" show-icon class="resource-alert" />
+      <el-alert v-if="pendingStock" title="请恢复原操作，确认完成后再继续" type="warning" :closable="false" class="resource-alert"><el-button :loading="submitting" :disabled="!!recoveryError || !canAdjust" @click="recoverStock">恢复原{{ pendingStock.endpoint.endsWith('/inbound') ? '入库' : '出库' }}</el-button></el-alert>
       <el-alert v-if="detailError" :title="detailError" type="warning" :closable="false" show-icon class="resource-alert">
         <template #default><el-button link type="primary" @click="loadProductDetail({ id: form.productId })">重新加载规格</el-button></template>
       </el-alert>
-      <el-form label-width="110px" v-loading="detailLoading">
+      <el-form label-width="110px" v-loading="detailLoading" :disabled="stockBlocked">
         <el-alert v-if="dialogType === 'stocktake'" title="填写实物清点后的总数量。盘点期间库存发生变化时，请重新核对。" type="info" :closable="false" class="resource-alert" />
         <el-alert v-if="dialogType === 'threshold'" title="阈值为 0 时关闭提前预警；库存为 0 时仍提示缺货。" type="info" :closable="false" class="resource-alert" />
         <el-form-item v-if="!selectingProduct && selectedProduct" label="商品">
@@ -584,7 +632,7 @@ watch(() => route.query, openShortcut)
       </el-form>
       <template #footer>
         <el-button @click="showDialog = false" :disabled="submitting">取消</el-button>
-        <el-button type="primary" @click="submitAction" :loading="submitting" :disabled="!canSubmit || detailLoading || !canAdjust">{{ submitLabel }}</el-button>
+        <el-button type="primary" @click="submitAction" :loading="submitting" :disabled="stockBlocked || !canSubmit || detailLoading || !canAdjust">{{ submitLabel }}</el-button>
       </template>
     </el-dialog>
 

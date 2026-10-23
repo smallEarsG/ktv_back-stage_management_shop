@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { computed, effectScope, reactive, ref, watch } from 'vue'
 import { inventorySummary, skuInventory } from './inventory.js'
+import { newRequestKey } from './operations.js'
 
 const product = { id: 2, name: '果味饮品', stock: 994, status: true, skus: [
   { id: 2, stockQuantity: 494, skuSpecs: '{"杯型":"中杯"}', lowStockThreshold: 10 },
@@ -12,15 +13,18 @@ const product = { id: 2, name: '果味饮品', stock: 994, status: true, skus: [
 
 function view(path, names, request = {}) {
   const source = fs.readFileSync(new URL(`../views/${path}`, import.meta.url), 'utf8')
-  const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replaceAll('import.meta.env.VITE_API_BASE_URL', "'/api'")
   const scope = effectScope()
-  const sandbox = { ref, reactive, computed, watch, inventorySummary, skuInventory, onMounted: () => {}, useRouter: () => ({ push: () => {} }),
-    useRoute: () => ({ query: {} }), useUserStore: () => ({ hasPermission: () => true }),
+  const saved = new Map(), disposers = []
+  const sandbox = { ref, reactive, computed, watch, inventorySummary, skuInventory, newRequestKey, onMounted: () => {}, onBeforeUnmount: callback => disposers.push(callback), useRouter: () => ({ push: () => {} }),
+    localStorage: { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
+    useRoute: () => ({ query: {} }), useUserStore: () => ({ hasPermission: () => true, currentStoreId: 1, userInfo: { id: 1 } }),
     request, console: { error: () => {} }, ElMessage: { error: () => {}, success: () => {}, warning: () => {} },
     ElMessageBox: { confirm: async () => {} } }
   vm.createContext(sandbox)
+  sandbox.authStorage = sandbox.localStorage
   scope.run(() => vm.runInContext(script + `\napi = { ${names.join(',')} };`, sandbox))
-  return { ...sandbox.api, stop: () => scope.stop() }
+  return { ...sandbox.api, stop: () => { disposers.forEach(callback => callback()); scope.stop() } }
 }
 
 test('stocktake follows selected SKU instead of aggregate stock and posts a baseline', async () => {

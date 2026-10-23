@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, reactive, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, reactive, computed, watch } from 'vue'
 import { Plus, Edit, Delete, MoreFilled, Search } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -22,6 +22,12 @@ const updateProductLayout = () => { mobileProductLayout.value = productMediaQuer
 
 const activeCategory = ref('')
 const showEditDialog = ref(false)
+const productSaving = ref(false), imageUploading = ref(false), productSaveError = ref(''), productSaveUncertain = ref(false)
+let editorGeneration = 0, uploadGeneration = 0
+watch(showEditDialog, open => {
+  if (!open) { editorGeneration++; uploadGeneration++; imageUploading.value = false }
+}, { flush: 'sync' })
+onBeforeUnmount(() => { editorGeneration++; uploadGeneration++ })
 const showCategoryDialog = ref(false)
 const showEditCategoryDialog = ref(false)
 const categories = ref([])
@@ -90,6 +96,21 @@ const addCategoryForm = reactive({
 
 const addSpec = () => {
   productForm.specs.push({ name: '', values: [], tempValue: '' })
+}
+
+const renameSpec = (index, value) => {
+  const spec = productForm.specs[index]
+  if (!spec) return
+  const name = String(value).trim(), previous = spec.name
+  if (name === previous) return
+  if (name && (productForm.specs.some((other, i) => i !== index && other.name.trim() === name) || productForm.skus.some(sku => Object.hasOwn(sku.specs || {}, name)))) {
+    ElMessage.warning('规格名称不能重复'); return
+  }
+  // Rename the dimension in place: regenerating combinations would replace stocked SKU IDs.
+  for (const sku of productForm.skus) {
+    sku.specs = Object.fromEntries(Object.entries(sku.specs || {}).map(([key, item]) => [key === previous ? name : key, item]))
+  }
+  spec.name = name
 }
 
 const removeSpec = (index) => {
@@ -178,12 +199,13 @@ const generateSkus = () => {
     const existing = productForm.skus?.[0]
     productForm.skus = [
       {
+        ...existing,
         id: existing?.id ?? null,
         __key: existing?.__key ?? `sku_${skuKeySeed++}`,
         specs: {},
         price: Number(existing?.price) || 0,
         stock: Number(existing?.stock) || 0,
-        lowStockThreshold: Number(existing?.lowStockThreshold ?? 10) || 10,
+        lowStockThreshold: existing?.lowStockThreshold ?? 10,
         skuCode: existing?.skuCode ?? ''
       }
     ]
@@ -283,7 +305,9 @@ const changeProductStatus = async (row, active) => {
 }
 
 const handleAdd = () => {
-  if (!canCreate.value) return
+  if (!canCreate.value || productSaving.value) return
+  editorGeneration++; uploadGeneration++; imageUploading.value = false
+  productSaveError.value = ''; productSaveUncertain.value = false
   productForm.id = null
   productForm.name = ''
   productForm.categoryId =
@@ -313,7 +337,9 @@ const handleAdd = () => {
 }
 
 const handleEdit = (row) => {
-  if (!canEdit.value) return
+  if (!canEdit.value || productSaving.value) return
+  editorGeneration++; uploadGeneration++; imageUploading.value = false
+  productSaveError.value = ''; productSaveUncertain.value = false
   const p = normalizeProduct({ ...row })
   productForm.id = p.id ?? null
   productForm.name = p.name ?? ''
@@ -387,10 +413,23 @@ const handleDelete = async (row) => {
   }
 }
 const saveProduct = async () => {
-  if (!(productForm.id ? canEdit.value : canCreate.value)) return
+  if (productSaving.value || imageUploading.value || productSaveUncertain.value || !(productForm.id ? canEdit.value : canCreate.value)) return
+  productSaving.value = true
+  productSaveError.value = ''
+  const generation = editorGeneration
+  let writing = false
   try {
     const valid = await productFormRef.value?.validate?.()
-    if (!valid) return
+    if (!valid || generation !== editorGeneration || !showEditDialog.value) return
+    if (productForm.hasSkus && productForm.specs.length) {
+      const names = productForm.specs.map(spec => spec.name.trim())
+      if (names.some(name => !name) || new Set(names).size !== names.length || productForm.specs.some(spec => !spec.values.length)) {
+        ElMessage.error('请填写完整且不重复的规格名称和规格值'); return
+      }
+      if (productForm.skus.some(sku => names.some(name => !Object.hasOwn(sku.specs || {}, name)) || Object.keys(sku.specs || {}).length !== names.length)) {
+        ElMessage.error('规格与SKU不一致，请核对规格后重新保存'); return
+      }
+    }
     if (!Array.isArray(productForm.skus) || productForm.skus.length === 0) {
       ElMessage.error('至少需要 1 条SKU')
       return
@@ -433,6 +472,7 @@ const saveProduct = async () => {
       })),
       price: minPrice === Infinity ? 0 : minPrice
     }
+    writing = true
     if (productForm.id) {
       await request.put(`/products/${productForm.id}`, payload)
       ElMessage.success('更新成功')
@@ -443,8 +483,12 @@ const saveProduct = async () => {
     showEditDialog.value = false
     fetchProducts()
   } catch (e) {
+    if (writing && !e.definitive) {
+      productSaveUncertain.value = true
+      productSaveError.value = '保存结果暂未确认，请关闭窗口并刷新列表核对，避免重复创建商品。'
+    }
     console.error(e)
-  }
+  } finally { productSaving.value = false }
 }
 
 const handleAddCategory = async () => {
@@ -542,6 +586,9 @@ const beforeUpload = (file) => {
 
 const handleUploadRequest = async (options) => {
   if (!(productForm.id ? canEdit.value : canCreate.value)) return
+  const generation = editorGeneration, upload = ++uploadGeneration, target = productForm.id
+  const current = () => generation === editorGeneration && upload === uploadGeneration && target === productForm.id && showEditDialog.value
+  imageUploading.value = true
   try {
     const formData = new FormData()
     formData.append('file', options.file)
@@ -549,6 +596,7 @@ const handleUploadRequest = async (options) => {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
     const imageUrl = res?.url || res?.path || res?.image || res
+    if (!current()) return
     if (typeof imageUrl !== 'string' || !imageUrl) {
       throw new Error('上传失败')
     }
@@ -556,12 +604,14 @@ const handleUploadRequest = async (options) => {
     uploadFileList.value = [{ name: options.file.name, url: imageUrl }]
     options.onSuccess && options.onSuccess(res)
   } catch (e) {
+    if (!current()) return
     options.onError && options.onError(e)
     ElMessage.error('上传失败')
-  }
+  } finally { if (current()) imageUploading.value = false }
 }
 
 const handleRemoveImage = () => {
+  uploadGeneration++; imageUploading.value = false
   productForm.image = ''
   uploadFileList.value = []
 }
@@ -867,8 +917,9 @@ onMounted(() => {
         <el-button @click="showDetailDialog = false">关闭</el-button>
       </template>
     </el-dialog>
-    <el-dialog v-model="showEditDialog" :title="productForm.id ? '编辑商品' : '新增商品'" width="860px">
-      <el-form label-width="80px" :model="productForm" :rules="productRules" ref="productFormRef">
+    <el-dialog v-model="showEditDialog" :title="productForm.id ? '编辑商品' : '新增商品'" width="860px" :close-on-click-modal="!productSaving" :close-on-press-escape="!productSaving" :show-close="!productSaving">
+      <el-alert v-if="productSaveError" :title="productSaveError" type="warning" :closable="false" class="mb-4" />
+      <el-form label-width="80px" :model="productForm" :rules="productRules" ref="productFormRef" :disabled="productSaving || productSaveUncertain">
         <el-alert :title="productForm.id ? '库存和预警值由仓库管理维护，编辑商品不会修改库存。已有库存或业务记录的规格请保留。' : '新商品和新规格的库存为0，保存后请到仓库管理办理入库。'" type="info" :closable="false" class="mb-4" />
         <el-form-item label="商品类型" prop="categoryId">
           <el-select v-model="productForm.categoryId" placeholder="请选择商品类型" class="w-full">
@@ -890,7 +941,7 @@ onMounted(() => {
 
             <div v-for="(spec, index) in productForm.specs" :key="index" class="p-4 mb-4 rounded border bg-slate-50">
                <div class="flex justify-between items-center mb-2">
-                 <el-input v-model="spec.name" placeholder="规格名 (e.g. 颜色)" class="w-40" />
+                 <el-input :model-value="spec.name" placeholder="规格名 (e.g. 颜色)" class="w-40" @update:model-value="value => renameSpec(index, value)" />
                  <el-button type="danger" link @click="removeSpec(index)">删除</el-button>
                </div>
                <div class="flex flex-wrap gap-2 items-center">
@@ -969,11 +1020,11 @@ onMounted(() => {
         <el-form-item label="状态">
           <el-switch v-model="productForm.status" active-text="上架" inactive-text="下架" />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :disabled="!(productForm.id ? canEdit : canCreate)" @click="saveProduct">保存</el-button>
-          <el-button @click="showEditDialog = false">取消</el-button>
-        </el-form-item>
       </el-form>
+      <template #footer>
+          <el-button type="primary" :loading="productSaving || imageUploading" :disabled="productSaveUncertain || productSaving || imageUploading || !(productForm.id ? canEdit : canCreate)" @click="saveProduct">{{ imageUploading ? '图片上传中' : '保存' }}</el-button>
+          <el-button :disabled="productSaving" @click="showEditDialog = false">{{ productSaveUncertain ? '关闭并核对列表' : '取消' }}</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="showSkuAttrDialog" title="SKU属性配置" width="760px">
